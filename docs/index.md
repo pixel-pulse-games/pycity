@@ -1,3 +1,4 @@
+<link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
 # PyCity
 
 <script src="theme.js"></script>
