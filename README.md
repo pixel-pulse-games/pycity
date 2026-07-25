@@ -9,7 +9,7 @@ This project features a native Windows compilation script (`build.bat`). You can
 Before running the builder, you only need one portable tool:
 
 1. Download **w64devkit** (a minimal, portable C/C++ compiler suite for Windows).
-   * Get it from the official GitHub releases: `://github.com`
+   * Get it from the official GitHub releases: `https://github.com/skeeto/w64devkit/releases`
 2. Unzip the archive to a clean directory on your machine (e.g., `C:\w64devkit`).
 
 ---
