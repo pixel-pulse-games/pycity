@@ -1,4 +1,10 @@
+<link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
 # 🛠️ Compiling PyCity Natively on Windows
+
+[Home Page](index.md)
+
+
+<script src="theme.js"></script>
 
 PyCity is written in C/C++ using the ultra-lightweight **Raylib** graphics library. To keep things fast and transparent, the game features a native Windows Master Builder script (`build.bat`). 
 
