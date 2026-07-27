@@ -9,8 +9,8 @@ A road-building city sim. Zone the city, connect it, keep traffic moving.
 
 ## News
 
-- **v0.2** — Second playable build with Assets And 32 bit support.
-- **v0.1** — First playable build.
+- **v0.0.2** — Second playable build with Assets And 32 bit support.
+- **v0.0.1** — First playable build.
 
 ## Status
 
