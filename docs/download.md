@@ -2,7 +2,7 @@
 # Download (Windows) — PyCity 
 <script src="theme.js"></script> 
 
-[Home](index.md) · **Download** 
+[Home](index.md) · **Download** [Beta Download](Beta-Download.md)
 
 # 64 bit 
 [Download latest build — .zip 64 bit](https://github.com/pycity-project/pycity-project.github.io/releases/latest/download/pycity-win64.zip) 
@@ -17,17 +17,7 @@
 
 # Beta Builds
 
-<details>
- <summary><b>Click to show Beta / Alpha configurations (Only Open this is your sure you want to download these files)</b></summary>
-
- # 64 bit
- [Download Beta/Alpha — .zip 64 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.2/pycity-win64.zip)
-
- # 32 bit
-
- [Download Beta/Alpha — .zip 32 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.2/pycity-win32.zip) 
- 
- </details>
+[Beta Page](Beta-Download.md)
 
 <div id="latest-release-info">Loading version notes...</div>
 <script src="releases.js"></script>
