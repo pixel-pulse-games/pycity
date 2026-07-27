@@ -20,6 +20,6 @@ A road-building city sim. Zone the city, connect it, keep traffic moving.
 
 ---
 
-See How to Compile [Compiler Steps](https://pixel-pulse.work.gd/pycity/Compiling.md)
+See How to Compile [Compiler Steps](https://pixel-pulse.work.gd/pycity/Compiling.html)
 
 PyCity — alpha in progress. [Source](https://github.com/m97493578-ops/PyCity)
