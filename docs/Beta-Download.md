@@ -4,11 +4,11 @@
 
 
 # 64 bit
-[Download Beta/Alpha — .zip 64 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.3/pycity-win64.zip)
+[Download Beta/Alpha — .zip 64 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.4/pycity-win64.zip)
 
 # 32 bit
 
-[Download Beta/Alpha — .zip 32 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.3/pycity-win32.zip) 
+[Download Beta/Alpha — .zip 32 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.4/pycity-win32.zip) 
 
 
 <div id="latest-release-info">Loading version notes...</div>

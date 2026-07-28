@@ -4,27 +4,51 @@
 // simple supply/demand economy.
 //
 // Controls:
-//   1 = Road tool     2 = House tool     3 = Factory tool     4 = Bulldoze
+//   1 = Road tool     2 = House tool     3 = Factory tool   4 = Farm tool   5 = Bulldoze
 //   Left click        = place/remove on hovered tile
 //   Arrows / WASD     = pan camera
 //   Space             = pause/unpause simulation
 //   F5                = save     F9 = load
 //   Esc               = quit
 //
+// Economy chain: farms grow food (supply) -> trucks haul it to factories that
+// need it (demand) -> factories turn it into goods (supply) -> trucks haul
+// THOSE to houses that need them (demand). Two truck routes, not one.
+//
+// April Fools: if the real-world date is April 1st, the game periodically
+// scatters silly decorative items on empty grass tiles. Purely cosmetic.
+//
 // Build: gcc main.c -o pycity -Iraylib/src -Lraylib/src -lraylib -lm -lpthread -ldl -lrt -lX11
 // Run:   ./pycity
 //
-// Assets expected at (relative to the working directory you run ./pycity from):
-//   assets/tile_0025.png  -> road
-//   assets/tile_0100.png  -> house
-//   assets/tile_0073.png  -> factory
-//   assets/tile_0000.png, tile_0001.png, tile_0002.png -> grass variants (empty tiles)
+// Assets folder layout:
+//   assets/base/            - normal tiles (everything except farm)
+//     tile_0025.png  -> road
+//     tile_0100.png  -> house
+//     tile_0073.png  -> factory
+//     tile_0000.png, tile_0001.png, tile_0002.png -> grass variants
+//   assets/farm/             - farm building art (Kenney "Tiny Farm" pack -
+//     tile_0091.png             the farm building
+//     tile_0097.png             haybale icon, overlaid on a farm once it
+//                               has enough crops grown to send a truck
+//   assets/april_fools/      - drop ANY .png props in here, no naming
+//                              needed. On April 1st the game scans this
+//                              folder at startup and scatters whichever
+//                              images it finds on random empty tiles.
+//   assets/winter/           - drop ANY .png ground tiles in here (Kenney
+//                              "Tiny Ski" pack works well). During winter
+//                              months (Dec/Jan/Feb) empty tiles are drawn
+//                              from this folder instead of assets/base/'s
+//                              grass variants.
+// Every one of these gracefully falls back to a flat color / simple shape
+// if its folder is empty or missing - same pattern as always in this file.
 
 #include "raylib.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
+#include <time.h>
 
 // The map is bigger than one screen now - the camera scrolls over it.
 #define MAP_COLS 60
@@ -46,14 +70,25 @@
 #define SAVE_MAGIC 0x50434954 // "PCIT"
 
 // ---- economy tuning ----
-#define DEMAND_GROWTH_PER_FRAME 0.04f   // how fast a house's demand fills up
-#define SUPPLY_GROWTH_PER_FRAME 0.05f   // how fast a factory restocks
-#define DELIVERY_AMOUNT 35.0f           // how much one truckload moves
-#define MIN_DEMAND_TO_SERVE 15.0f       // house needs at least this much demand to get a truck
-#define MIN_SUPPLY_TO_PICKUP 15.0f      // factory needs at least this much supply to send a truck
+#define DEMAND_GROWTH_PER_FRAME 0.04f      // how fast a house's demand fills up
+#define SUPPLY_GROWTH_PER_FRAME 0.05f      // how fast a farm's crops grow back in
+#define FOOD_DEMAND_GROWTH_PER_FRAME 0.05f // how fast a factory's need for food fills up
+#define DELIVERY_AMOUNT 35.0f              // how much one truckload moves
+#define MIN_DEMAND_TO_SERVE 15.0f          // house/factory needs at least this much demand to get a truck
+#define MIN_SUPPLY_TO_PICKUP 15.0f         // farm/factory needs at least this much supply to send a truck
 
-typedef enum { TILE_EMPTY = 0, TILE_ROAD, TILE_HOUSE, TILE_FACTORY, TOTAL_TILE_TYPES } TileType;
-typedef enum { TOOL_ROAD = 0, TOOL_HOUSE, TOOL_FACTORY, TOOL_BULLDOZE } Tool;
+// ---- April Fools tuning ----
+#define MAX_APRIL_FOOLS_TEXTURES 32      // cap on how many props we'll load from assets/april_fools/
+#define APRIL_FOOLS_SPAWN_CHANCE 300     // 1-in-N per frame while active (roughly every ~5s at 60fps)
+
+// ---- Winter tuning ----
+#define MAX_WINTER_TEXTURES 32           // cap on how many ground tiles we'll load from assets/winter/
+
+typedef enum { TILE_EMPTY = 0, TILE_ROAD, TILE_HOUSE, TILE_FACTORY, TILE_FARM, TOTAL_TILE_TYPES } TileType;
+// TILE_FARM is appended after TILE_FACTORY (not inserted earlier) so the
+// integer value of every existing tile type is unchanged - old savegame.dat
+// files still load correctly.
+typedef enum { TOOL_ROAD = 0, TOOL_HOUSE, TOOL_FACTORY, TOOL_FARM, TOOL_BULLDOZE } Tool;
 
 #define TOTAL_GRASS_VARIANTS 3
 
@@ -70,15 +105,46 @@ static Texture2D gameAssets[TOTAL_TILE_TYPES];
 static Texture2D grassTextures[TOTAL_GRASS_VARIANTS];
 static int grassVariant[MAP_ROWS][MAP_COLS];
 
+// demand/supply now mean different things depending on where a building sits
+// in the chain:
+//   TILE_HOUSE:   demand = 0-100, how much it wants a goods delivery
+//   TILE_FARM:    supply = 0-100, how much food it has ready to ship
+//   TILE_FACTORY: demand = 0-100, how hungry it is for food from a farm
+//                 supply = 0-100, how many finished goods it has ready to
+//                          ship to a house (only rises when food arrives -
+//                          it does NOT grow on its own anymore)
 typedef struct {
     int r, c;
     TileType type;
-    float demand;  // used by TILE_HOUSE: 0-100, how much it wants a delivery
-    float supply;  // used by TILE_FACTORY: 0-100, how much it has ready to ship
+    float demand;
+    float supply;
 } Building;
 
 static Building buildings[MAX_BUILDINGS];
 static int buildingCount = 0;
+
+// Farm decoration: a haybale icon overlaid on a farm tile once it has
+// enough supply built up to actually send a truck - a quick visual "ready
+// to ship" cue, on top of the meter bar.
+static Texture2D farmHayBaleTexture;
+
+// ---- April Fools ----
+// Purely cosmetic: on empty tiles only, never blocks or interacts with
+// gameplay. -1 means "no item on this tile". Textures are whatever .png
+// files happen to be sitting in assets/april_fools/ at startup - see
+// LoadPngsFromFolder().
+static int aprilFoolsItem[MAP_ROWS][MAP_COLS];
+static Texture2D aprilFoolsTextures[MAX_APRIL_FOOLS_TEXTURES];
+static int aprilFoolsTextureCount = 0;
+static Color aprilFoolsFallbackColor = (Color){255, 210, 60, 255}; // used only if a loaded file somehow fails to draw
+
+// ---- Winter ----
+// Seasonal ground reskin: during Dec/Jan/Feb, empty tiles are drawn from
+// whatever .png files are sitting in assets/winter/ instead of the normal
+// grass variants. Falls back to normal grass if the folder is empty.
+static Texture2D winterTextures[MAX_WINTER_TEXTURES];
+static int winterTextureCount = 0;
+static bool winterActive = false; // recomputed once per frame
 
 typedef struct {
     int pathR[MAX_PATH];
@@ -195,46 +261,63 @@ static bool BFSPath(int sr, int sc, int er, int ec, Truck *tr) {
     return true;
 }
 
-// Picks a real factory->house trip based on who actually has supply/demand
-// right now, instead of just grabbing two random buildings.
-static void SpawnTruck(void) {
-    int factoryCandidates[MAX_BUILDINGS];
-    int houseCandidates[MAX_BUILDINGS];
-    int factoryCount = 0, houseCount = 0;
+// Picks a real trip along one leg of the chain (a source type with supply
+// ready to ship, to a destination type that actually wants it) instead of
+// just grabbing two random buildings. Returns true if a truck was spawned.
+static bool SpawnTruckLeg(TileType fromType, TileType toType, Color truckColor) {
+    int fromCandidates[MAX_BUILDINGS];
+    int toCandidates[MAX_BUILDINGS];
+    int fromCount = 0, toCount = 0;
 
     for (int i = 0; i < buildingCount; i++) {
-        if (buildings[i].type == TILE_FACTORY && buildings[i].supply >= MIN_SUPPLY_TO_PICKUP) {
-            factoryCandidates[factoryCount++] = i;
-        } else if (buildings[i].type == TILE_HOUSE && buildings[i].demand >= MIN_DEMAND_TO_SERVE) {
-            houseCandidates[houseCount++] = i;
+        if (buildings[i].type == fromType && buildings[i].supply >= MIN_SUPPLY_TO_PICKUP) {
+            fromCandidates[fromCount++] = i;
+        } else if (buildings[i].type == toType && buildings[i].demand >= MIN_DEMAND_TO_SERVE) {
+            toCandidates[toCount++] = i;
         }
     }
-    if (factoryCount == 0 || houseCount == 0) return; // nothing to ship right now
+    if (fromCount == 0 || toCount == 0) return false; // nothing to ship right now
 
     for (int i = 0; i < MAX_TRUCKS; i++) {
         if (trucks[i].active) continue;
 
-        int from = factoryCandidates[GetRandomValue(0, factoryCount-1)];
-        int to = houseCandidates[GetRandomValue(0, houseCount-1)];
+        int from = fromCandidates[GetRandomValue(0, fromCount-1)];
+        int to = toCandidates[GetRandomValue(0, toCount-1)];
 
         int sr, sc, er, ec;
-        if (!NearestRoad(buildings[from].r, buildings[from].c, &sr, &sc)) return;
-        if (!NearestRoad(buildings[to].r, buildings[to].c, &er, &ec)) return;
+        if (!NearestRoad(buildings[from].r, buildings[from].c, &sr, &sc)) return false;
+        if (!NearestRoad(buildings[to].r, buildings[to].c, &er, &ec)) return false;
 
         Truck t = {0};
-        if (!BFSPath(sr, sc, er, ec, &t)) return;
+        if (!BFSPath(sr, sc, er, ec, &t)) return false;
         t.idx = 0;
         t.t = 0;
         t.speed = 0.02f + GetRandomValue(0, 15)/1000.0f;
-        t.color = (Color){255,107,53,255};
+        t.color = truckColor;
         t.active = true;
         t.toBuildingIdx = to;
         trucks[i] = t;
 
-        // Goods leave the factory now; they arrive at the house later.
+        // Cargo leaves the source now; it arrives at the destination later.
         buildings[from].supply -= DELIVERY_AMOUNT;
         if (buildings[from].supply < 0) buildings[from].supply = 0;
-        return;
+        return true;
+    }
+    return false;
+}
+
+static const Color FARM_TRUCK_COLOR    = (Color){110, 190, 90, 255};  // green - hauling food
+static const Color FACTORY_TRUCK_COLOR = (Color){255, 107, 53, 255}; // orange - hauling goods (original color)
+
+// Tries both legs of the chain each tick, in random order, so neither one
+// starves the other of truck slots when both have work to do.
+static void SpawnTruck(void) {
+    if (GetRandomValue(0, 1) == 0) {
+        if (SpawnTruckLeg(TILE_FARM, TILE_FACTORY, FARM_TRUCK_COLOR)) return;
+        SpawnTruckLeg(TILE_FACTORY, TILE_HOUSE, FACTORY_TRUCK_COLOR);
+    } else {
+        if (SpawnTruckLeg(TILE_FACTORY, TILE_HOUSE, FACTORY_TRUCK_COLOR)) return;
+        SpawnTruckLeg(TILE_FARM, TILE_FACTORY, FARM_TRUCK_COLOR);
     }
 }
 
@@ -246,12 +329,42 @@ static void UpdateBuildings(void) {
                 totalDemandGenerated += DEMAND_GROWTH_PER_FRAME;
                 if (buildings[i].demand > 100.0f) buildings[i].demand = 100.0f;
             }
-        } else if (buildings[i].type == TILE_FACTORY) {
+        } else if (buildings[i].type == TILE_FARM) {
             if (buildings[i].supply < 100.0f) {
                 buildings[i].supply += SUPPLY_GROWTH_PER_FRAME;
                 if (buildings[i].supply > 100.0f) buildings[i].supply = 100.0f;
             }
+        } else if (buildings[i].type == TILE_FACTORY) {
+            // A factory's hunger for food grows on its own; its *goods*
+            // supply does not - that only rises when a farm delivery
+            // arrives (see DeliverToBuilding).
+            if (buildings[i].demand < 100.0f) {
+                buildings[i].demand += FOOD_DEMAND_GROWTH_PER_FRAME;
+                if (buildings[i].demand > 100.0f) buildings[i].demand = 100.0f;
+            }
         }
+    }
+}
+
+// Unloads one truckload at its destination building. Houses just consume
+// it (end of the chain). Factories convert it: the food reduces their
+// hunger (demand) AND becomes finished goods (supply) ready for the next
+// leg to a house.
+static void DeliverToBuilding(int buildingIdx) {
+    if (buildingIdx < 0 || buildingIdx >= buildingCount) return;
+    Building *b = &buildings[buildingIdx];
+
+    if (b->type == TILE_HOUSE) {
+        float served = (b->demand < DELIVERY_AMOUNT) ? b->demand : DELIVERY_AMOUNT;
+        b->demand -= served;
+        if (b->demand < 0) b->demand = 0;
+        totalDemandServed += served;
+    } else if (b->type == TILE_FACTORY) {
+        float served = (b->demand < DELIVERY_AMOUNT) ? b->demand : DELIVERY_AMOUNT;
+        b->demand -= served;
+        if (b->demand < 0) b->demand = 0;
+        b->supply += served;
+        if (b->supply > 100.0f) b->supply = 100.0f;
     }
 }
 
@@ -262,15 +375,7 @@ static void UpdateTrucks(void) {
         if (tr->idx >= tr->pathLen - 1) {
             tr->active = false;
             deliveries++;
-            if (tr->toBuildingIdx >= 0 && tr->toBuildingIdx < buildingCount) {
-                Building *b = &buildings[tr->toBuildingIdx];
-                if (b->type == TILE_HOUSE) {
-                    float served = (b->demand < DELIVERY_AMOUNT) ? b->demand : DELIVERY_AMOUNT;
-                    b->demand -= served;
-                    if (b->demand < 0) b->demand = 0;
-                    totalDemandServed += served;
-                }
-            }
+            DeliverToBuilding(tr->toBuildingIdx);
             continue;
         }
         tr->t += tr->speed;
@@ -280,15 +385,7 @@ static void UpdateTrucks(void) {
             if (tr->idx >= tr->pathLen - 1) {
                 tr->active = false;
                 deliveries++;
-                if (tr->toBuildingIdx >= 0 && tr->toBuildingIdx < buildingCount) {
-                    Building *b = &buildings[tr->toBuildingIdx];
-                    if (b->type == TILE_HOUSE) {
-                        float served = (b->demand < DELIVERY_AMOUNT) ? b->demand : DELIVERY_AMOUNT;
-                        b->demand -= served;
-                        if (b->demand < 0) b->demand = 0;
-                        totalDemandServed += served;
-                    }
-                }
+                DeliverToBuilding(tr->toBuildingIdx);
             }
         }
     }
@@ -312,28 +409,43 @@ static void DrawTrucks(void) {
     }
 }
 
-// Small bar over a building showing demand (house) or supply (factory).
+// Draws one thin meter bar at a given offset above a building.
+static void DrawMeterBar(float x, float yOffset, float w, float h, float pct, Color barColor) {
+    DrawRectangle((int)x, (int)yOffset, (int)w, (int)h, (Color){20,20,20,180});
+    DrawRectangle((int)x, (int)yOffset, (int)(w*pct), (int)h, barColor);
+}
+
+// Small bar(s) over a building showing demand (house), crop growth (farm),
+// or - for factories - two bars: food need on top, goods ready below.
 static void DrawBuildingMeter(Building *b) {
     Vector2 screenPos = WorldToScreen(CellCenterWorld(b->r, b->c));
     float x = screenPos.x - TILE*0.4f;
-    float y = screenPos.y - TILE*0.55f;
     float w = TILE*0.8f;
     float h = 4.0f;
     if (screenPos.x < -TILE || screenPos.x > SCREEN_W+TILE) return;
     if (screenPos.y < TOP_BAR-TILE || screenPos.y > SCREEN_H+TILE) return;
 
+    if (b->type == TILE_FACTORY) {
+        float foodPct = b->demand/100.0f;   // how hungry for food (high = urgent)
+        float goodsPct = b->supply/100.0f;  // how many goods ready (high = good)
+        Color foodColor  = (foodPct > 0.7f) ? (Color){220,60,50,255} : (foodPct > 0.35f) ? (Color){242,193,78,255} : (Color){90,170,90,255};
+        Color goodsColor = (goodsPct > 0.5f) ? (Color){90,170,90,255} : (goodsPct > 0.2f) ? (Color){242,193,78,255} : (Color){120,120,120,255};
+        DrawMeterBar(x, screenPos.y - TILE*0.62f, w, h, foodPct, foodColor);
+        DrawMeterBar(x, screenPos.y - TILE*0.50f, w, h, goodsPct, goodsColor);
+        return;
+    }
+
+    float y = screenPos.y - TILE*0.55f;
     float pct = (b->type == TILE_HOUSE) ? (b->demand/100.0f) : (b->supply/100.0f);
     Color barColor;
     if (b->type == TILE_HOUSE) {
         // For houses, high demand = bad (unmet need), so red at high.
         barColor = (pct > 0.7f) ? (Color){220,60,50,255} : (pct > 0.35f) ? (Color){242,193,78,255} : (Color){90,170,90,255};
     } else {
-        // For factories, high supply = good (ready to ship).
+        // For farms, high supply = good (crops ready to ship).
         barColor = (pct > 0.5f) ? (Color){90,170,90,255} : (pct > 0.2f) ? (Color){242,193,78,255} : (Color){120,120,120,255};
     }
-
-    DrawRectangle((int)x, (int)y, (int)w, (int)h, (Color){20,20,20,180});
-    DrawRectangle((int)x, (int)y, (int)(w*pct), (int)h, barColor);
+    DrawMeterBar(x, y, w, h, pct, barColor);
 }
 
 static void AddBuilding(int r, int c, TileType type) {
@@ -342,7 +454,9 @@ static void AddBuilding(int r, int c, TileType type) {
     buildings[buildingCount].c = c;
     buildings[buildingCount].type = type;
     buildings[buildingCount].demand = 0.0f;
-    buildings[buildingCount].supply = (type == TILE_FACTORY) ? 50.0f : 0.0f; // factories start half-stocked
+    // Farms start half-grown, same as factories used to. Factories now
+    // start with nothing to ship - they need a farm delivery first.
+    buildings[buildingCount].supply = (type == TILE_FARM) ? 50.0f : 0.0f;
     buildingCount++;
 }
 
@@ -365,16 +479,49 @@ static void LoadTileAsset(TileType type, const char *path) {
     gameAssets[type] = tex;
 }
 
+// Scans a folder for .png files and loads every one it finds (up to
+// maxCount) into outTextures. Returns how many were actually loaded.
+// This is what lets assets/april_fools/ and assets/winter/ "just take
+// random pngs" - drop files in, no filename or code changes needed.
+static int LoadPngsFromFolder(const char *folder, Texture2D *outTextures, int maxCount) {
+    FilePathList files = LoadDirectoryFilesEx(folder, ".png", false);
+    int loaded = 0;
+    for (unsigned int i = 0; i < files.count && loaded < maxCount; i++) {
+        Texture2D tex = LoadTexture(files.paths[i]);
+        if (tex.id != 0) {
+            outTextures[loaded++] = tex;
+        } else {
+            TraceLog(LOG_WARNING, "PyCity: failed to load '%s'", files.paths[i]);
+        }
+    }
+    UnloadDirectoryFiles(files);
+    if (loaded == 0) {
+        TraceLog(LOG_WARNING, "PyCity: no usable .png files found in '%s'", folder);
+    }
+    return loaded;
+}
+
 static void LoadAllAssets(void) {
     gameAssets[TILE_EMPTY] = (Texture2D){ 0 };
-    LoadTileAsset(TILE_ROAD,    "assets/tile_0025.png");
-    LoadTileAsset(TILE_HOUSE,   "assets/tile_0100.png");
-    LoadTileAsset(TILE_FACTORY, "assets/tile_0073.png");
+    LoadTileAsset(TILE_ROAD,    "assets/base/tile_0025.png");
+    LoadTileAsset(TILE_HOUSE,   "assets/base/tile_0100.png");
+    LoadTileAsset(TILE_FACTORY, "assets/base/tile_0073.png");
+    // Kenney "Tiny Farm" pack also uses the tile_XXXX.png naming
+    // convention - drop the pack into assets/farm/.
+    LoadTileAsset(TILE_FARM, "assets/farm/tile_0091.png");
+
+    farmHayBaleTexture = LoadTexture("assets/farm/tile_0097.png");
+    if (farmHayBaleTexture.id == 0) {
+        TraceLog(LOG_WARNING, "PyCity: failed to load 'assets/farm/tile_0097.png' - falling back to a colored shape for the haybale indicator");
+    }
+
+    aprilFoolsTextureCount = LoadPngsFromFolder("assets/april_fools", aprilFoolsTextures, MAX_APRIL_FOOLS_TEXTURES);
+    winterTextureCount = LoadPngsFromFolder("assets/winter", winterTextures, MAX_WINTER_TEXTURES);
 
     const char *grassPaths[TOTAL_GRASS_VARIANTS] = {
-        "assets/tile_0000.png",
-        "assets/tile_0001.png",
-        "assets/tile_0002.png"
+        "assets/base/tile_0000.png",
+        "assets/base/tile_0001.png",
+        "assets/base/tile_0002.png"
     };
     for (int i = 0; i < TOTAL_GRASS_VARIANTS; i++) {
         Texture2D tex = LoadTexture(grassPaths[i]);
@@ -403,6 +550,13 @@ static void UnloadAllAssets(void) {
     for (int i = 0; i < TOTAL_GRASS_VARIANTS; i++) {
         if (grassTextures[i].id != 0) UnloadTexture(grassTextures[i]);
     }
+    for (int i = 0; i < aprilFoolsTextureCount; i++) {
+        if (aprilFoolsTextures[i].id != 0) UnloadTexture(aprilFoolsTextures[i]);
+    }
+    for (int i = 0; i < winterTextureCount; i++) {
+        if (winterTextures[i].id != 0) UnloadTexture(winterTextures[i]);
+    }
+    if (farmHayBaleTexture.id != 0) UnloadTexture(farmHayBaleTexture);
 }
 
 // Draws one tile: the loaded texture if it exists, otherwise a flat color fallback.
@@ -413,12 +567,17 @@ static void DrawTile(TileType type, int r, int c, int x, int y) {
         case TILE_ROAD:    fallback = (Color){58,67,64,255};   break;
         case TILE_HOUSE:   fallback = (Color){76,110,156,255}; break;
         case TILE_FACTORY: fallback = (Color){255,107,53,255}; break;
+        case TILE_FARM:    fallback = (Color){196,164,60,255}; break; // wheat gold
         default: break;
     }
 
     Texture2D tex;
     if (type == TILE_EMPTY) {
-        tex = grassTextures[grassVariant[r][c]];
+        if (winterActive && winterTextureCount > 0) {
+            tex = winterTextures[grassVariant[r][c] % winterTextureCount];
+        } else {
+            tex = grassTextures[grassVariant[r][c]];
+        }
     } else {
         tex = gameAssets[type];
     }
@@ -429,6 +588,95 @@ static void DrawTile(TileType type, int r, int c, int x, int y) {
         DrawTexturePro(tex, src, dst, (Vector2){0,0}, 0.0f, WHITE);
     } else {
         DrawRectangle(x, y, TILE-1, TILE-1, fallback);
+    }
+}
+
+// Checks the REAL-WORLD system date, not anything in-game. Only ever
+// true on April 1st.
+static bool IsAprilFoolsToday(void) {
+    time_t now = time(NULL);
+    struct tm *lt = localtime(&now);
+    if (!lt) return false;
+    return (lt->tm_mon == 3 && lt->tm_mday == 1); // tm_mon is 0-indexed: April = 3
+}
+
+// True during meteorological winter (Dec/Jan/Feb), real-world date.
+static bool IsWinterToday(void) {
+    time_t now = time(NULL);
+    struct tm *lt = localtime(&now);
+    if (!lt) return false;
+    return (lt->tm_mon == 11 || lt->tm_mon == 0 || lt->tm_mon == 1);
+}
+
+static void ResetAprilFoolsItems(void) {
+    for (int r = 0; r < MAP_ROWS; r++)
+        for (int c = 0; c < MAP_COLS; c++)
+            aprilFoolsItem[r][c] = -1;
+}
+
+// Drops one silly prop on a random empty tile. Called sparingly (see the
+// APRIL_FOOLS_SPAWN_CHANCE roll in main's update loop) so the map doesn't
+// get flooded with them.
+static void SpawnAprilFoolsItem(void) {
+    if (aprilFoolsTextureCount == 0) return; // nothing was loadable from assets/april_fools/
+    int emptyR[MAP_ROWS*MAP_COLS], emptyC[MAP_ROWS*MAP_COLS];
+    int emptyCount = 0;
+    for (int r = 0; r < MAP_ROWS; r++) {
+        for (int c = 0; c < MAP_COLS; c++) {
+            if (grid[r][c] == TILE_EMPTY && aprilFoolsItem[r][c] == -1) {
+                emptyR[emptyCount] = r; emptyC[emptyCount] = c; emptyCount++;
+            }
+        }
+    }
+    if (emptyCount == 0) return;
+    int pick = GetRandomValue(0, emptyCount-1);
+    aprilFoolsItem[emptyR[pick]][emptyC[pick]] = GetRandomValue(0, aprilFoolsTextureCount-1);
+}
+
+// Draws whatever silly props have landed on empty tiles so far today.
+// Only ever called when IsAprilFoolsToday() is true.
+static void DrawAprilFoolsItems(void) {
+    for (int rr = camR; rr < camR + VIEW_ROWS && rr < MAP_ROWS; rr++) {
+        for (int cc = camC; cc < camC + VIEW_COLS && cc < MAP_COLS; cc++) {
+            if (grid[rr][cc] != TILE_EMPTY) continue;
+            int item = aprilFoolsItem[rr][cc];
+            if (item < 0) continue;
+
+            int x = (cc - camC)*TILE;
+            int y = TOP_BAR + (rr - camR)*TILE;
+            Texture2D tex = aprilFoolsTextures[item];
+            if (tex.id != 0) {
+                Rectangle src = { 0, 0, (float)tex.width, (float)tex.height };
+                Rectangle dst = { (float)x, (float)y, (float)TILE, (float)TILE };
+                DrawTexturePro(tex, src, dst, (Vector2){0,0}, 0.0f, WHITE);
+            } else {
+                DrawCircle(x + TILE/2, y + TILE/2, TILE*0.3f, aprilFoolsFallbackColor);
+            }
+        }
+    }
+}
+
+// Overlays a small haybale icon in the corner of a farm tile once it has
+// enough supply stacked up to actually send a truck. Purely a visual cue -
+// the meter bar above already shows the exact number.
+static void DrawFarmReadyIndicator(Building *b) {
+    if (b->type != TILE_FARM) return;
+    if (b->supply < MIN_SUPPLY_TO_PICKUP) return;
+
+    Vector2 screenPos = WorldToScreen(CellCenterWorld(b->r, b->c));
+    if (screenPos.x < -TILE || screenPos.x > SCREEN_W+TILE) return;
+    if (screenPos.y < TOP_BAR-TILE || screenPos.y > SCREEN_H+TILE) return;
+
+    float size = TILE * 0.45f;
+    float x = screenPos.x + TILE*0.5f - size;
+    float y = screenPos.y + TILE*0.5f - size;
+
+    if (farmHayBaleTexture.id != 0) {
+        Rectangle src = { 0, 0, (float)farmHayBaleTexture.width, (float)farmHayBaleTexture.height };
+        Rectangle dst = { x, y, size, size };
+        DrawTexturePro(farmHayBaleTexture, src, dst, (Vector2){0,0}, 0.0f, WHITE);
+    } else {
+        DrawRectangle((int)x, (int)y, (int)size, (int)size, (Color){196,164,60,255});
     }
 }
 
@@ -483,6 +731,9 @@ static bool LoadGame(void) {
 
     // Clear any in-flight trucks - their paths reference the old world state.
     memset(trucks, 0, sizeof(trucks));
+    // April Fools props are cosmetic-only and aren't part of the save
+    // format, so just clear them out rather than leaving stale ones around.
+    ResetAprilFoolsItems();
 
     TraceLog(LOG_INFO, "PyCity: game loaded from %s", SAVE_FILE);
     return true;
@@ -498,6 +749,7 @@ int main(void) {
 
     memset(grid, TILE_EMPTY, sizeof(grid));
     memset(trucks, 0, sizeof(trucks));
+    ResetAprilFoolsItems();
 
     Tool tool = TOOL_ROAD;
     bool paused = false;
@@ -508,7 +760,8 @@ int main(void) {
         if (IsKeyPressed(KEY_ONE))   tool = TOOL_ROAD;
         if (IsKeyPressed(KEY_TWO))   tool = TOOL_HOUSE;
         if (IsKeyPressed(KEY_THREE)) tool = TOOL_FACTORY;
-        if (IsKeyPressed(KEY_FOUR))  tool = TOOL_BULLDOZE;
+        if (IsKeyPressed(KEY_FOUR))  tool = TOOL_FARM;
+        if (IsKeyPressed(KEY_FIVE)) tool = TOOL_BULLDOZE;
         if (IsKeyPressed(KEY_SPACE)) paused = !paused;
         if (IsKeyPressed(KEY_F5)) SaveGame();
         if (IsKeyPressed(KEY_F9)) LoadGame();
@@ -538,9 +791,12 @@ int main(void) {
                 case TOOL_FACTORY:
                     if (grid[r][c] == TILE_EMPTY) { grid[r][c] = TILE_FACTORY; AddBuilding(r,c,TILE_FACTORY); }
                     break;
+                case TOOL_FARM:
+                    if (grid[r][c] == TILE_EMPTY) { grid[r][c] = TILE_FARM; AddBuilding(r,c,TILE_FARM); }
+                    break;
                 case TOOL_BULLDOZE:
                     if (grid[r][c] != TILE_EMPTY) {
-                        if (grid[r][c] == TILE_HOUSE || grid[r][c] == TILE_FACTORY) RemoveBuildingAt(r,c);
+                        if (grid[r][c] == TILE_HOUSE || grid[r][c] == TILE_FACTORY || grid[r][c] == TILE_FARM) RemoveBuildingAt(r,c);
                         grid[r][c] = TILE_EMPTY;
                     }
                     break;
@@ -548,9 +804,14 @@ int main(void) {
         }
 
         // ---- update ----
+        bool aprilFools = IsAprilFoolsToday();
+        winterActive = IsWinterToday();
         if (!paused) {
             UpdateBuildings();
             UpdateTrucks();
+            if (aprilFools && GetRandomValue(0, APRIL_FOOLS_SPAWN_CHANCE) == 0) {
+                SpawnAprilFoolsItem();
+            }
         }
 
         // ---- draw ----
@@ -566,9 +827,12 @@ int main(void) {
             }
         }
 
-        // building meters (demand/supply bars)
+        if (aprilFools) DrawAprilFoolsItems();
+
+        // building meters (demand/supply bars) and farm ready-to-ship icons
         for (int i = 0; i < buildingCount; i++) {
             DrawBuildingMeter(&buildings[i]);
+            DrawFarmReadyIndicator(&buildings[i]);
         }
 
         // hover highlight
@@ -580,13 +844,19 @@ int main(void) {
 
         // toolbar (drawn last so it sits on top of the map)
         DrawRectangle(0, 0, SCREEN_W, TOP_BAR, (Color){28,35,33,255});
-        const char *toolNames[4] = {"ROAD (1)", "HOUSE (2)", "FACTORY (3)", "BULLDOZE (4)"};
+        const char *toolNames[5] = {"ROAD (1)", "HOUSE (2)", "FACTORY (3)", "FARM (4)", "BULLDOZE (5)"};
         DrawText(TextFormat("Tool: %s", toolNames[tool]), 10, 8, 18, (Color){255,107,53,255});
 
         double demandMetPct = (totalDemandGenerated > 0.001) ? (totalDemandServed/totalDemandGenerated*100.0) : 100.0;
         DrawText(TextFormat("Deliveries: %d   Buildings: %d   Demand met: %.0f%%   %s",
                   deliveries, buildingCount, demandMetPct, paused ? "[PAUSED]" : ""),
                   10, 32, 16, (Color){237,232,222,255});
+
+        if (aprilFools) {
+            DrawText("Happy April Fools!", SCREEN_W-260, 8, 16, (Color){255,210,60,255});
+        } else if (winterActive) {
+            DrawText("Winter", SCREEN_W-260, 8, 16, (Color){200,220,255,255});
+        }
         DrawText("F5 save   F9 load   Arrows/WASD pan", SCREEN_W-260, 20, 14, (Color){160,160,150,255});
 
         EndDrawing();
