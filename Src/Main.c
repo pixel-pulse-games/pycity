@@ -35,11 +35,14 @@
 //                              needed. On April 1st the game scans this
 //                              folder at startup and scatters whichever
 //                              images it finds on random empty tiles.
-//   assets/winter/           - drop ANY .png ground tiles in here (Kenney
-//                              "Tiny Ski" pack works well). During winter
-//                              months (Dec/Jan/Feb) empty tiles are drawn
-//                              from this folder instead of assets/base/'s
-//                              grass variants.
+//   assets/winter/           - winter reskin tiles (Kenney "Tiny Ski" pack -
+//     tile_0000.png             \
+//     tile_0004.png              > winter grass variants (same 3-slot
+//     tile_0005.png             /  scheme as assets/base/'s grass)
+//     tile_0028.png             winter road/street tile
+//                               During winter months (Dec/Jan/Feb) these
+//                               replace the base grass/road art; falls
+//                               back to the normal base tiles if missing.
 // Every one of these gracefully falls back to a flat color / simple shape
 // if its folder is empty or missing - same pattern as always in this file.
 
@@ -82,7 +85,7 @@
 #define APRIL_FOOLS_SPAWN_CHANCE 300     // 1-in-N per frame while active (roughly every ~5s at 60fps)
 
 // ---- Winter tuning ----
-#define MAX_WINTER_TEXTURES 32           // cap on how many ground tiles we'll load from assets/winter/
+// (no cap needed - winter uses specific named tiles, see LoadAllAssets)
 
 typedef enum { TILE_EMPTY = 0, TILE_ROAD, TILE_HOUSE, TILE_FACTORY, TILE_FARM, TOTAL_TILE_TYPES } TileType;
 // TILE_FARM is appended after TILE_FACTORY (not inserted earlier) so the
@@ -139,11 +142,11 @@ static int aprilFoolsTextureCount = 0;
 static Color aprilFoolsFallbackColor = (Color){255, 210, 60, 255}; // used only if a loaded file somehow fails to draw
 
 // ---- Winter ----
-// Seasonal ground reskin: during Dec/Jan/Feb, empty tiles are drawn from
-// whatever .png files are sitting in assets/winter/ instead of the normal
-// grass variants. Falls back to normal grass if the folder is empty.
-static Texture2D winterTextures[MAX_WINTER_TEXTURES];
-static int winterTextureCount = 0;
+// Seasonal reskin: during Dec/Jan/Feb, empty tiles and roads are drawn
+// from these specific tiles instead of assets/base/'s versions. Falls
+// back to the normal base art if a winter file is missing.
+static Texture2D winterGrassTextures[TOTAL_GRASS_VARIANTS];
+static Texture2D winterRoadTexture;
 static bool winterActive = false; // recomputed once per frame
 
 typedef struct {
@@ -481,8 +484,9 @@ static void LoadTileAsset(TileType type, const char *path) {
 
 // Scans a folder for .png files and loads every one it finds (up to
 // maxCount) into outTextures. Returns how many were actually loaded.
-// This is what lets assets/april_fools/ and assets/winter/ "just take
-// random pngs" - drop files in, no filename or code changes needed.
+// This is what lets assets/april_fools/ "just take random pngs" - drop
+// files in, no filename or code changes needed. (Winter uses specific
+// named tiles instead, since it's a coherent reskin, not random props.)
 static int LoadPngsFromFolder(const char *folder, Texture2D *outTextures, int maxCount) {
     FilePathList files = LoadDirectoryFilesEx(folder, ".png", false);
     int loaded = 0;
@@ -516,7 +520,24 @@ static void LoadAllAssets(void) {
     }
 
     aprilFoolsTextureCount = LoadPngsFromFolder("assets/april_fools", aprilFoolsTextures, MAX_APRIL_FOOLS_TEXTURES);
-    winterTextureCount = LoadPngsFromFolder("assets/winter", winterTextures, MAX_WINTER_TEXTURES);
+    // Kenney "Tiny Ski" pack - winter grass variants (same 3-slot scheme
+    // as the base grass) plus a dedicated winter road/street tile.
+    const char *winterGrassPaths[TOTAL_GRASS_VARIANTS] = {
+        "assets/winter/tile_0000.png",
+        "assets/winter/tile_0004.png",
+        "assets/winter/tile_0005.png"
+    };
+    for (int i = 0; i < TOTAL_GRASS_VARIANTS; i++) {
+        Texture2D tex = LoadTexture(winterGrassPaths[i]);
+        if (tex.id == 0) {
+            TraceLog(LOG_WARNING, "PyCity: failed to load '%s' - falling back to the normal base grass for this variant in winter", winterGrassPaths[i]);
+        }
+        winterGrassTextures[i] = tex;
+    }
+    winterRoadTexture = LoadTexture("assets/winter/tile_0028.png");
+    if (winterRoadTexture.id == 0) {
+        TraceLog(LOG_WARNING, "PyCity: failed to load 'assets/winter/tile_0028.png' - falling back to the normal base road in winter");
+    }
 
     const char *grassPaths[TOTAL_GRASS_VARIANTS] = {
         "assets/base/tile_0000.png",
@@ -553,9 +574,10 @@ static void UnloadAllAssets(void) {
     for (int i = 0; i < aprilFoolsTextureCount; i++) {
         if (aprilFoolsTextures[i].id != 0) UnloadTexture(aprilFoolsTextures[i]);
     }
-    for (int i = 0; i < winterTextureCount; i++) {
-        if (winterTextures[i].id != 0) UnloadTexture(winterTextures[i]);
+    for (int i = 0; i < TOTAL_GRASS_VARIANTS; i++) {
+        if (winterGrassTextures[i].id != 0) UnloadTexture(winterGrassTextures[i]);
     }
+    if (winterRoadTexture.id != 0) UnloadTexture(winterRoadTexture);
     if (farmHayBaleTexture.id != 0) UnloadTexture(farmHayBaleTexture);
 }
 
@@ -573,11 +595,10 @@ static void DrawTile(TileType type, int r, int c, int x, int y) {
 
     Texture2D tex;
     if (type == TILE_EMPTY) {
-        if (winterActive && winterTextureCount > 0) {
-            tex = winterTextures[grassVariant[r][c] % winterTextureCount];
-        } else {
-            tex = grassTextures[grassVariant[r][c]];
-        }
+        Texture2D winterTex = winterGrassTextures[grassVariant[r][c]];
+        tex = (winterActive && winterTex.id != 0) ? winterTex : grassTextures[grassVariant[r][c]];
+    } else if (type == TILE_ROAD && winterActive && winterRoadTexture.id != 0) {
+        tex = winterRoadTexture;
     } else {
         tex = gameAssets[type];
     }
