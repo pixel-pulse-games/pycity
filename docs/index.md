@@ -15,7 +15,7 @@ A road-building city sim. Zone the city, connect it, keep traffic moving.
 ## Status
 
 - Roads & traffic: working
-- Zoning: in progress
+- Zoning: Working
 - Windows build: alpha
 
 ---
