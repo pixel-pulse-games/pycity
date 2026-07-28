@@ -6,11 +6,13 @@
 
 # 64 bit 
 [Download latest build — .zip 64 bit](https://github.com/pycity-project/pycity-project.github.io/releases/latest/download/pycity-win64.zip) 
+[Download latest build — .exe (Self-Extracting) 64 bit](https://github.com/pycity-project/pycity-project.github.io/releases/latest/download/pycity-win64.exe) 
 
  
 
 # 32 Bit 
 [Download latest build — .zip 32 bit](https://github.com/pycity-project/pycity-project.github.io/releases/latest/download/pycity-win32.zip) 
+[Download latest build — .exe (Self-Extracting) 32 bit](https://github.com/pycity-project/pycity-project.github.io/releases/latest/download/pycity-win32.exe) 
 
 
 
