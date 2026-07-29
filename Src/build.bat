@@ -83,6 +83,7 @@ echo.
 echo 1) x64 Production Build (64-bit Core Binary)
 echo 2) x86 Legacy Compatibility Build (32-bit Core Binary)
 echo 3) Build Both Architectures (Simultaneously)
+echo 4) Build Patcher (Patcher.exe, 32-bit - runs on 32-bit and 64-bit Windows)
 echo r) Reset Configuration Paths
 echo q) Exit Builder
 echo ========================================================
@@ -91,6 +92,7 @@ set /p choice="Enter selection: "
 if "%choice%"=="1" goto BUILD_64
 if "%choice%"=="2" goto BUILD_32
 if "%choice%"=="3" goto BUILD_BOTH
+if "%choice%"=="4" goto BUILD_PATCHER
 if "%choice%"=="r" goto RESET_CONFIG
 if "%choice%"=="q" exit
 goto MENU
@@ -124,6 +126,19 @@ if exist "%W32_BIN_PATH%\mingw32-make.exe" set "MAKE_32=mingw32-make"
 start /b cmd /c "set "PATH=%W64_BIN_PATH%;%%PATH%%" && "%MAKE_64%" OUT=pycity-win64.exe RAYLIB_DIR=raylib64/src"
 start /b cmd /c "set "PATH=%W32_BIN_PATH%;%%PATH%%" && "%MAKE_32%" OUT=pycity-win32.exe RAYLIB_DIR=raylib32/src"
 timeout /t 2 >nul
+goto END
+
+:BUILD_PATCHER
+echo.
+echo [!] Building Patcher.exe (32-bit, so it runs on any Windows install)...
+:: Patcher.c only needs wininet + Windows system headers - no raylib, no
+:: Makefile involved, so this is just a direct gcc call. Built 32-bit
+:: deliberately (via the w32devkit toolchain) since a 32-bit exe runs on
+:: both 32-bit and 64-bit Windows via WOW64, and the patcher itself
+:: doesn't need 64-bit performance - one Patcher.exe covers every install
+:: regardless of which game architecture (win32/win64) it's updating.
+set "PATH=%W32_BIN_PATH%;%PATH%"
+gcc Patcher/patcher.c -o Patcher.exe -lwininet
 goto END
 
 :RESET_CONFIG
