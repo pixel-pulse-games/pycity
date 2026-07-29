@@ -30,7 +30,7 @@ async function fetchLatestRelease() {
     } catch (error) {
         console.error(error);
         if (error.message === 'RateLimitExceeded') {
-            container.innerHTML = `<p style="color: var(--text-color);">API limit reached. View updates on <a href="https://github.com" target="_blank" style="color: #58a6ff; text-decoration: underline;">GitHub Releases</a>.</p>`;
+            container.innerHTML = `<p style="color: var(--text-color);">API limit reached. View updates on <a href="https://github.com/pixel-pulse-games/pycity/releases" target="_blank" style="color: #58a6ff; text-decoration: underline;">GitHub Releases</a>.</p>`;
         } else {
             container.innerHTML = `<p style="color: red;">Could not load version notes automatically.</p>`;
         }
