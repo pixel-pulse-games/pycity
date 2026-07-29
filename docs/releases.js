@@ -3,7 +3,7 @@ async function fetchLatestRelease() {
     if (!container) return;
 
     try {
-        const response = await fetch('https://github.com', {
+        const response = await fetch('https://api.github.com/repos/pycity-project/pycity-project.github.io/releases/latest', {
             headers: { 'User-Agent': 'PyCity-Website-Updater' }
         });
 
