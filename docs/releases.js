@@ -3,41 +3,34 @@ async function fetchLatestRelease() {
     if (!container) return;
 
     try {
-        // Includes a custom User-Agent string to comply with GitHub API guidelines
-        const response = await fetch('https://api.github.com/repos/pycity-project/pycity-project.github.io/releases/latest', {
-            headers: {
-                'User-Agent': 'PyCity-Website-Updater'
-            }
+        const response = await fetch('https://github.com', {
+            headers: { 'User-Agent': 'PyCity-Website-Updater' }
         });
 
-        // Specific error handling for hitting GitHub API rate limits (HTTP 403)
-        if (response.status === 403) {
-            throw new Error('RateLimitExceeded');
-        }
-
-        if (!response.ok) {
-            throw new Error('Failed to fetch release metadata');
-        }
+        if (response.status === 403) throw new Error('RateLimitExceeded');
+        if (!response.ok) throw new Error('Failed to fetch release metadata');
 
         const data = await response.json();
-        const cleanBody = data.body ? data.body.replace(/\r\n|\n/g, '<br>') : 'No release notes provided.';
+        let bodyText = data.body || 'No release notes provided.';
+
+        // --- Simple Markdown to HTML Parser ---
+        bodyText = bodyText
+            .replace(/^### (.*$)/gim, '<h4 style="color: var(--text-color); margin: 15px 0 5px 0;">$1</h4>') // ### H3 -> H4
+            .replace(/^## (.*$)/gim, '<h3 style="color: var(--text-color); margin: 15px 0 5px 0;">$1</h3>')   // ## H2 -> H3
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')                                                 // **Bold**
+            .replace(/^\s*-\s*(.*$)/gim, '<li style="margin-left: 15px; margin-bottom: 4px;">$1</li>')       // - Lists
+            .replace(/\r\n|\n/g, '<br>');                                                                    // Line breaks
 
         container.innerHTML = `
-            <div style="margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 6px; background-color: var(--btn-bg);">
-                <strong style="color: var(--text-color); font-size: 16px;">Latest Version: ${data.name || data.tag_name}</strong>
-                <p style="color: var(--text-color); margin-top: 8px; font-size: 14px; line-height: 1.5;">${cleanBody}</p>
+            <div style="margin: 20px 0; padding: 15px; border: 1px solid var(--border-color); border-radius: 6px; background-color: var(--btn-bg); color: var(--text-color);">
+                <strong style="font-size: 16px;">Latest Version: ${data.name || data.tag_name}</strong>
+                <div style="margin-top: 12px; font-size: 14px; line-height: 1.6;">${bodyText}</div>
             </div>
         `;
     } catch (error) {
         console.error(error);
-        
-        // Displays a user-friendly manual download link if the API fails
         if (error.message === 'RateLimitExceeded') {
-            container.innerHTML = `
-                <p style="color: var(--text-color);">
-                    API limit reached. Please view updates directly on the 
-                    <a href="https://github.com" target="_blank" style="color: #58a6ff; text-decoration: underline;">GitHub Releases Page</a>.
-                </p>`;
+            container.innerHTML = `<p style="color: var(--text-color);">API limit reached. View updates on <a href="https://github.com" target="_blank" style="color: #58a6ff; text-decoration: underline;">GitHub Releases</a>.</p>`;
         } else {
             container.innerHTML = `<p style="color: red;">Could not load version notes automatically.</p>`;
         }
