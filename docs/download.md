@@ -17,6 +17,10 @@
 [Download latest build — .exe (Self-Extracting) 32 bit](https://github.com/pycity-project/pycity-project.github.io/releases/latest/download/pycity-win32.exe) 
 
 
+# Updater
+
+[Download the Updater 64 and 32 bit](https://github.com/pycity-project/pycity-project.github.io/releases/latest/download/patcher.zip)
+
 
 
 # Beta Builds
