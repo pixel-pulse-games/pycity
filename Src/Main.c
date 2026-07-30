@@ -918,10 +918,10 @@ int main(void) {
         // toolbar (drawn last so it sits on top of the map)
         DrawRectangle(0, 0, SCREEN_W, TOP_BAR, (Color){28,35,33,255});
         const char *toolNames[5] = {
-            TextFormat("ROAD (1) $%.0f", COST_ROAD),
-            TextFormat("HOUSE (2) $%.0f", COST_HOUSE),
-            TextFormat("FACTORY (3) $%.0f", COST_FACTORY),
-            TextFormat("FARM (4) $%.0f", COST_FARM),
+            "ROAD (1) $10", 
+            "HOUSE (2) $50",
+            "FACTORY (3) $150",
+            "FARM (4) $100", 
             "BULLDOZE (5)"
         };
         DrawText(TextFormat("Tool: %s", toolNames[tool]), 10, 8, 18, (Color){255,107,53,255});
