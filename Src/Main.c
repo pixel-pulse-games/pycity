@@ -11,6 +11,11 @@
 //   F5                = save     F9 = load
 //   Esc               = quit
 //
+// Money: building costs money (road $10, house $50, factory $150, farm
+// $100), houses pay a flat tax over time regardless of how well they're
+// served, and there's no debt - insufficient funds just blocks placement.
+// Bulldozing refunds 50% of a tile's build cost.
+//
 // Economy chain: farms grow food (supply) -> trucks haul it to factories that
 // need it (demand) -> factories turn it into goods (supply) -> trucks haul
 // THOSE to houses that need them (demand). Two truck routes, not one.
@@ -72,7 +77,16 @@
 #define SAVE_FILE "savegame.dat"
 #define SAVE_MAGIC 0x50434954 // "PCIT"
 
-// ---- economy tuning ----
+// ---- Money tuning ----
+#define STARTING_MONEY 500.0
+#define COST_ROAD     10.0
+#define COST_HOUSE    50.0
+#define COST_FACTORY 150.0
+#define COST_FARM    100.0
+#define TAX_PER_HOUSE_PER_FRAME 0.02 // flat per house, regardless of how well it's served
+#define BULLDOZE_REFUND_PERCENT 0.5  // partial refund only, so build-then-bulldoze isn't free money
+
+static double money = STARTING_MONEY;
 #define DEMAND_GROWTH_PER_FRAME 0.04f      // how fast a house's demand fills up
 #define SUPPLY_GROWTH_PER_FRAME 0.05f      // how fast a farm's crops grow back in
 #define FOOD_DEMAND_GROWTH_PER_FRAME 0.05f // how fast a factory's need for food fills up
@@ -92,6 +106,18 @@ typedef enum { TILE_EMPTY = 0, TILE_ROAD, TILE_HOUSE, TILE_FACTORY, TILE_FARM, T
 // integer value of every existing tile type is unchanged - old savegame.dat
 // files still load correctly.
 typedef enum { TOOL_ROAD = 0, TOOL_HOUSE, TOOL_FACTORY, TOOL_FARM, TOOL_BULLDOZE } Tool;
+
+// Cost to place one tile of a given type. Also used to compute the
+// bulldoze refund (see BULLDOZE_REFUND_PERCENT).
+static double GetBuildCost(TileType type) {
+    switch (type) {
+        case TILE_ROAD:    return COST_ROAD;
+        case TILE_HOUSE:   return COST_HOUSE;
+        case TILE_FACTORY: return COST_FACTORY;
+        case TILE_FARM:    return COST_FARM;
+        default:           return 0.0;
+    }
+}
 
 #define TOTAL_GRASS_VARIANTS 3
 
@@ -332,6 +358,8 @@ static void UpdateBuildings(void) {
                 totalDemandGenerated += DEMAND_GROWTH_PER_FRAME;
                 if (buildings[i].demand > 100.0f) buildings[i].demand = 100.0f;
             }
+            // Flat tax, regardless of how well this house is being served.
+            money += TAX_PER_HOUSE_PER_FRAME;
         } else if (buildings[i].type == TILE_FARM) {
             if (buildings[i].supply < 100.0f) {
                 buildings[i].supply += SUPPLY_GROWTH_PER_FRAME;
@@ -724,6 +752,7 @@ static void SaveGame(void) {
     fwrite(&deliveries, sizeof(int), 1, f);
     fwrite(&totalDemandGenerated, sizeof(double), 1, f);
     fwrite(&totalDemandServed, sizeof(double), 1, f);
+    fwrite(&money, sizeof(double), 1, f);
 
     fclose(f);
     TraceLog(LOG_INFO, "PyCity: game saved to %s", SAVE_FILE);
@@ -747,6 +776,13 @@ static bool LoadGame(void) {
     fread(&deliveries, sizeof(int), 1, f);
     fread(&totalDemandGenerated, sizeof(double), 1, f);
     fread(&totalDemandServed, sizeof(double), 1, f);
+
+    // Money didn't exist in older saves. Read into a scratch variable and
+    // only accept it if a full value was actually present, so an old,
+    // shorter save file can't leave `money` partially overwritten with
+    // garbage bytes.
+    double loadedMoney;
+    money = (fread(&loadedMoney, sizeof(double), 1, f) == 1) ? loadedMoney : STARTING_MONEY;
 
     fclose(f);
 
@@ -804,19 +840,35 @@ int main(void) {
         if (hovering && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             switch (tool) {
                 case TOOL_ROAD:
-                    if (grid[r][c] == TILE_EMPTY) grid[r][c] = TILE_ROAD;
+                    if (grid[r][c] == TILE_EMPTY && money >= COST_ROAD) {
+                        grid[r][c] = TILE_ROAD;
+                        money -= COST_ROAD;
+                    }
                     break;
                 case TOOL_HOUSE:
-                    if (grid[r][c] == TILE_EMPTY) { grid[r][c] = TILE_HOUSE; AddBuilding(r,c,TILE_HOUSE); }
+                    if (grid[r][c] == TILE_EMPTY && money >= COST_HOUSE) {
+                        grid[r][c] = TILE_HOUSE;
+                        AddBuilding(r,c,TILE_HOUSE);
+                        money -= COST_HOUSE;
+                    }
                     break;
                 case TOOL_FACTORY:
-                    if (grid[r][c] == TILE_EMPTY) { grid[r][c] = TILE_FACTORY; AddBuilding(r,c,TILE_FACTORY); }
+                    if (grid[r][c] == TILE_EMPTY && money >= COST_FACTORY) {
+                        grid[r][c] = TILE_FACTORY;
+                        AddBuilding(r,c,TILE_FACTORY);
+                        money -= COST_FACTORY;
+                    }
                     break;
                 case TOOL_FARM:
-                    if (grid[r][c] == TILE_EMPTY) { grid[r][c] = TILE_FARM; AddBuilding(r,c,TILE_FARM); }
+                    if (grid[r][c] == TILE_EMPTY && money >= COST_FARM) {
+                        grid[r][c] = TILE_FARM;
+                        AddBuilding(r,c,TILE_FARM);
+                        money -= COST_FARM;
+                    }
                     break;
                 case TOOL_BULLDOZE:
                     if (grid[r][c] != TILE_EMPTY) {
+                        money += GetBuildCost(grid[r][c]) * BULLDOZE_REFUND_PERCENT;
                         if (grid[r][c] == TILE_HOUSE || grid[r][c] == TILE_FACTORY || grid[r][c] == TILE_FARM) RemoveBuildingAt(r,c);
                         grid[r][c] = TILE_EMPTY;
                     }
@@ -865,10 +917,18 @@ int main(void) {
 
         // toolbar (drawn last so it sits on top of the map)
         DrawRectangle(0, 0, SCREEN_W, TOP_BAR, (Color){28,35,33,255});
-        const char *toolNames[5] = {"ROAD (1)", "HOUSE (2)", "FACTORY (3)", "FARM (4)", "BULLDOZE (5)"};
+        const char *toolNames[5] = {
+            TextFormat("ROAD (1) $%.0f", COST_ROAD),
+            TextFormat("HOUSE (2) $%.0f", COST_HOUSE),
+            TextFormat("FACTORY (3) $%.0f", COST_FACTORY),
+            TextFormat("FARM (4) $%.0f", COST_FARM),
+            "BULLDOZE (5)"
+        };
         DrawText(TextFormat("Tool: %s", toolNames[tool]), 10, 8, 18, (Color){255,107,53,255});
 
         double demandMetPct = (totalDemandGenerated > 0.001) ? (totalDemandServed/totalDemandGenerated*100.0) : 100.0;
+        Color moneyColor = (money < COST_ROAD) ? (Color){220,60,50,255} : (Color){237,232,222,255};
+        DrawText(TextFormat("Money: $%.0f", money), 10, 52, 18, moneyColor);
         DrawText(TextFormat("Deliveries: %d   Buildings: %d   Demand met: %.0f%%   %s",
                   deliveries, buildingCount, demandMetPct, paused ? "[PAUSED]" : ""),
                   10, 32, 16, (Color){237,232,222,255});
