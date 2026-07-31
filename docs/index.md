@@ -19,6 +19,6 @@ There is a New build to download!
 
 ---
 
-See How to Compile [Compiler Steps](https://pixel-pulse.work.gd/pycity/Compiling.html)
+See How to Compile [Compiler Steps](Compiling.md)
 
 PyCity — alpha in progress. [Source](https://github.com/pixel-pulse-games/pycity)
