@@ -1,21 +1,45 @@
 // PyCity Auto-Updater
 //
 // Checks the latest GitHub release, and if it's newer than what's recorded
-// locally in version.txt, downloads it, extracts it into a staging folder,
-// verifies the extraction actually worked, and only THEN replaces the old
-// files - so a failed download or a bad zip can never leave the player with
-// a half-deleted game.
+// locally in version.txt, downloads it, verifies its SHA256 against the
+// checksums.txt asset published alongside the release, extracts it into a
+// staging folder, verifies the extraction actually worked, and only THEN
+// replaces the old files - so a failed download, a corrupted/tampered zip,
+// or a bad extraction can never leave the player with a half-deleted game.
+//
+// Note: version.txt (local, patcher-maintained, tracks installed version)
+// and checksums.txt (remote release asset, holds per-arch SHA256 hashes)
+// are two different files with two different jobs - don't confuse them.
 //
 // Build (from an MSYS2/MinGW or Visual Studio dev shell):
-//   gcc patcher.c -o patcher.exe -lwininet
+//   windres patcher.rc -O coff -o patcher_res.o
+//   gcc patcher.c patcher_res.o -o patcher.exe -lwininet -ladvapi32
+//
+// The windres step embeds patcher.manifest (asInvoker) into the exe.
+// Skipping it means Windows' installer-detection heuristic will silently
+// auto-elevate this exe via UAC, since it's a 32-bit binary whose name
+// contains "patch" - see patcher.manifest for details.
 //
 // Expects to sit next to pycity-win64.exe or pycity-win32.exe in the
 // game's install folder (whichever one is actually installed - the
 // patcher detects which by checking which file is present).
 
 #define _CRT_SECURE_NO_WARNINGS
+// CALG_SHA_256 is a Vista-era constant. MinGW's wincrypt.h only exposes it
+// when the target Windows version is declared as Vista or newer, so these
+// must be defined before windows.h (and therefore wincrypt.h) is pulled in.
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+#ifndef WINVER
+#define WINVER 0x0600
+#endif
+#ifndef NTDDI_VERSION
+#define NTDDI_VERSION 0x06000000
+#endif
 #include <windows.h>
 #include <wininet.h>
+#include <wincrypt.h>
 #include <tlhelp32.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -24,6 +48,7 @@
 #include <stdint.h>
 
 #pragma comment(lib, "wininet.lib")
+#pragma comment(lib, "advapi32.lib")
 
 // ---- Configuration ----
 #define TARGET_PROCESS_64 "pycity-win64.exe"
@@ -34,6 +59,9 @@
 #define RELEASE_API_URL  "https://api.github.com/repos/pixel-pulse-games/pycity/releases/latest"
 #define RELEASE_ZIP_URL_64 "https://github.com/pixel-pulse-games/pycity/releases/latest/download/pycity-win64.zip"
 #define RELEASE_ZIP_URL_32 "https://github.com/pixel-pulse-games/pycity/releases/latest/download/pycity-win32.zip"
+#define CHECKSUMS_URL    "https://github.com/pixel-pulse-games/pycity/releases/latest/download/checksums.txt"
+#define ARCH_KEY_64      "win64"
+#define ARCH_KEY_32      "win32"
 #define USER_AGENT       "PyCity-AutoUpdater/1.0"
 
 // ---- Process check ----
@@ -161,6 +189,74 @@ static bool FileExists(const char *path) {
     return (attrib != INVALID_FILE_ATTRIBUTES) && !(attrib & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+// ---- SHA256 verification ----
+// Uses Windows' built-in CryptoAPI (advapi32) so no external hashing
+// library needs to ship with the patcher.
+
+// Hashes a file on disk, writing a lowercase 64-char hex digest (+ NUL)
+// into out_hex. Returns false on any failure (missing file, API error).
+static bool Sha256File(const char *path, char out_hex[65]) {
+    HCRYPTPROV hProv = 0;
+    HCRYPTHASH hHash = 0;
+    BYTE buffer[8192];
+    DWORD bytesRead;
+    BYTE hash[32];
+    DWORD hashLen = sizeof(hash);
+    bool ok = false;
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+
+    if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT))
+        goto cleanup;
+    if (!CryptCreateHash(hProv, CALG_SHA_256, 0, 0, &hHash))
+        goto cleanup;
+
+    while ((bytesRead = (DWORD)fread(buffer, 1, sizeof(buffer), f)) > 0) {
+        if (!CryptHashData(hHash, buffer, bytesRead, 0))
+            goto cleanup;
+    }
+
+    if (!CryptGetHashParam(hHash, HP_HASHVAL, hash, &hashLen, 0))
+        goto cleanup;
+
+    for (DWORD i = 0; i < hashLen; i++)
+        sprintf(out_hex + i * 2, "%02x", hash[i]);
+    out_hex[hashLen * 2] = '\0';
+    ok = true;
+
+cleanup:
+    if (hHash) CryptDestroyHash(hHash);
+    if (hProv) CryptReleaseContext(hProv, 0);
+    fclose(f);
+    return ok;
+}
+
+// Parses "key=hexhash" lines (as published in the checksums.txt release
+// asset) looking for archKey (e.g. "win64"). Returns false if the file
+// can't be read or the key isn't present.
+static bool GetExpectedHashForArch(const char *checksumsText, const char *archKey, char out_hex[65]) {
+    char pattern[32];
+    snprintf(pattern, sizeof(pattern), "%s=", archKey);
+
+    const char *line = checksumsText;
+    size_t patLen = strlen(pattern);
+    while (line && *line) {
+        if (strncmp(line, pattern, patLen) == 0) {
+            const char *valueStart = line + patLen;
+            size_t len = 0;
+            while (valueStart[len] && valueStart[len] != '\r' && valueStart[len] != '\n' && len < 64) len++;
+            memcpy(out_hex, valueStart, len);
+            out_hex[len] = '\0';
+            return len == 64; // a SHA256 hex digest is always exactly 64 chars
+        }
+        const char *next = strchr(line, '\n');
+        if (!next) break;
+        line = next + 1;
+    }
+    return false;
+}
+
 // ---- Architecture detection ----
 // Which zip to grab depends on whether the player's *installed* game is
 // the 32-bit or 64-bit build. The build's own filename already tells us
@@ -278,6 +374,57 @@ static bool RunUpdate(GameArch arch, const char *targetExeName) {
         return false;
     }
     printf("[OK] Downloaded %lld bytes.\n", totalBytes);
+
+    // ---- Verify checksum before touching anything else ----
+    // A mismatch here (corrupted download, or a tampered/MITM'd zip) is
+    // treated exactly like a failed extraction below: bail out, leave the
+    // live install untouched, don't advance version.txt.
+    {
+        printf("[*] Verifying checksum...\n");
+        HINTERNET hVerify = InternetOpenA(USER_AGENT, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+        if (!hVerify) {
+            printf("[ERROR] Failed to initialize internet interface for checksum fetch.\n");
+            DeleteFileA(ZIP_PACKAGE);
+            return false;
+        }
+        char verifyHeaders[128];
+        snprintf(verifyHeaders, sizeof(verifyHeaders), "User-Agent: %s\r\n", USER_AGENT);
+
+        size_t checksumsLen = 0;
+        char *checksumsText = FetchUrlToBuffer(hVerify, CHECKSUMS_URL, verifyHeaders, &checksumsLen);
+        InternetCloseHandle(hVerify);
+        if (!checksumsText) {
+            printf("[ERROR] Failed to download checksums.txt - aborting, nothing was touched.\n");
+            DeleteFileA(ZIP_PACKAGE);
+            return false;
+        }
+
+        const char *archKey = (arch == ARCH_X64) ? ARCH_KEY_64 : ARCH_KEY_32;
+        char expectedHash[65] = { 0 };
+        bool haveExpected = GetExpectedHashForArch(checksumsText, archKey, expectedHash);
+        free(checksumsText);
+
+        if (!haveExpected) {
+            printf("[ERROR] No checksum entry for '%s' in checksums.txt - aborting, nothing was touched.\n", archKey);
+            DeleteFileA(ZIP_PACKAGE);
+            return false;
+        }
+
+        char actualHash[65] = { 0 };
+        if (!Sha256File(ZIP_PACKAGE, actualHash)) {
+            printf("[ERROR] Could not hash the downloaded file - aborting, nothing was touched.\n");
+            DeleteFileA(ZIP_PACKAGE);
+            return false;
+        }
+
+        if (_stricmp(expectedHash, actualHash) != 0) {
+            printf("[ERROR] Checksum mismatch! Expected %s, got %s.\n", expectedHash, actualHash);
+            printf("        Download may be corrupted or tampered with - aborting, nothing was touched.\n");
+            DeleteFileA(ZIP_PACKAGE);
+            return false;
+        }
+        printf("[OK] Checksum verified.\n");
+    }
 
     // ---- Extract to a staging folder first ----
     // Nothing about the live install is touched yet. If any of this

@@ -1,0 +1,5 @@
+// Embeds patcher.manifest into Patcher.exe as resource ID 1, RT_MANIFEST.
+// This is what actually opts the exe out of Windows' installer-detection
+// auto-elevation heuristic - the .manifest file alone does nothing unless
+// it's linked in as a resource.
+1 24 "patcher.manifest"

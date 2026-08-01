@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <!-- Explicitly run as the invoking user's normal privilege level.
+             Without this, Windows' installer-detection heuristic auto-elevates
+             any unmanifested 32-bit exe whose name contains "patch"/"update"/
+             "install"/"setup" - which is exactly what was happening here. -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>

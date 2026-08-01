@@ -131,14 +131,21 @@ goto END
 :BUILD_PATCHER
 echo.
 echo [!] Building Patcher.exe (32-bit, so it runs on any Windows install)...
-:: Patcher.c only needs wininet + Windows system headers - no raylib, no
-:: Makefile involved, so this is just a direct gcc call. Built 32-bit
-:: deliberately (via the w32devkit toolchain) since a 32-bit exe runs on
-:: both 32-bit and 64-bit Windows via WOW64, and the patcher itself
-:: doesn't need 64-bit performance - one Patcher.exe covers every install
-:: regardless of which game architecture (win32/win64) it's updating.
+:: Patcher.c only needs wininet + advapi32 (for SHA256 checksum verification)
+:: + Windows system headers - no raylib, no Makefile involved, so this is
+:: just a direct gcc call. Built 32-bit deliberately (via the w32devkit
+:: toolchain) since a 32-bit exe runs on both 32-bit and 64-bit Windows via
+:: WOW64, and the patcher itself doesn't need 64-bit performance - one
+:: Patcher.exe covers every install regardless of which game architecture
+:: (win32/win64) it's updating.
+::
+:: The windres step embeds patcher.manifest (asInvoker) into the exe.
+:: Without it, Windows' installer-detection heuristic auto-elevates this
+:: exe via UAC on its own, since it's an unmanifested 32-bit binary whose
+:: name contains "patch" - see patcher.manifest for the full explanation.
 set "PATH=%W32_BIN_PATH%;%PATH%"
-gcc Patcher/patcher.c -o Patcher.exe -lwininet
+windres Patcher/patcher.rc -O coff -o Patcher/patcher_res.o
+gcc Patcher/patcher.c Patcher/patcher_res.o -o Patcher.exe -lwininet -ladvapi32
 goto END
 
 :RESET_CONFIG
