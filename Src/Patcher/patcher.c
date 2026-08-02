@@ -13,7 +13,12 @@
 //
 // Build (from an MSYS2/MinGW or Visual Studio dev shell):
 //   windres patcher.rc -O coff -o patcher_res.o
-//   gcc patcher.c patcher_res.o -o patcher.exe -lwininet -ladvapi32
+//   gcc patcher.c patcher_res.o miniz.c -o patcher.exe ^
+//       -lwininet -ladvapi32
+//
+// Zip extraction uses miniz (public domain, MIT-equivalent - see
+// miniz.h for the license) instead of shelling out to tar.exe,
+// since tar.exe is only guaranteed present on Windows 10 1803 and newer.
 //
 // The windres step embeds patcher.manifest (asInvoker) into the exe.
 // Skipping it means Windows' installer-detection heuristic will silently
@@ -49,6 +54,12 @@
 
 #pragma comment(lib, "wininet.lib")
 #pragma comment(lib, "advapi32.lib")
+
+// Zip extraction via miniz instead of shelling out to tar.exe. tar.exe is
+// only guaranteed present on Windows 10 1803+ - miniz ships with the exe
+// so extraction works on any supported Windows version regardless of what
+// system tools happen to be on PATH.
+#include "miniz.h"
 
 // ---- Configuration ----
 #define TARGET_PROCESS_64 "pycity-win64.exe"
@@ -290,6 +301,87 @@ static void DeleteDirectoryRecursive(const char *path) {
     RunCommandAndWait(cmd);
 }
 
+// ---- Zip extraction (miniz) ----
+
+// Creates every directory along `path` that doesn't already exist, e.g.
+// given "update_staging\\pycity-win64\\assets\\base" it creates
+// "update_staging", then "...\\pycity-win64", then "...\\assets", then
+// "...\\base". Needed because zip entries can be several folders deep and
+// CreateDirectoryA only ever makes one level at a time.
+static void CreateDirectoriesRecursive(const char *path) {
+    char buffer[MAX_PATH];
+    size_t len = strlen(path);
+    if (len >= sizeof(buffer)) len = sizeof(buffer) - 1;
+    memcpy(buffer, path, len);
+    buffer[len] = '\0';
+
+    for (size_t i = 0; i < len; i++) {
+        if (buffer[i] == '/') buffer[i] = '\\';
+    }
+
+    for (size_t i = 1; i < len; i++) {
+        if (buffer[i] == '\\') {
+            buffer[i] = '\0';
+            CreateDirectoryA(buffer, NULL); // ignore failure - "already exists" is fine
+            buffer[i] = '\\';
+        }
+    }
+    CreateDirectoryA(buffer, NULL);
+}
+
+// Extracts every entry in zipPath into destDir, recreating the folder
+// structure stored in the zip. Returns false on any failure (bad archive,
+// a file that can't be written, etc.) - the caller treats that exactly
+// like the old tar-exit-code check: abort, don't touch the live install.
+static bool ExtractZipToDirectory(const char *zipPath, const char *destDir) {
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+
+    if (!mz_zip_reader_init_file(&zip, zipPath, 0)) {
+        return false;
+    }
+
+    bool ok = true;
+    mz_uint fileCount = mz_zip_reader_get_num_files(&zip);
+
+    for (mz_uint i = 0; i < fileCount && ok; i++) {
+        mz_zip_archive_file_stat fileStat;
+        if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
+            ok = false;
+            break;
+        }
+
+        char destPath[MAX_PATH];
+        snprintf(destPath, sizeof(destPath), "%s\\%s", destDir, fileStat.m_filename);
+        for (char *p = destPath; *p; p++) {
+            if (*p == '/') *p = '\\';
+        }
+
+        if (mz_zip_reader_is_file_a_directory(&zip, i)) {
+            CreateDirectoriesRecursive(destPath);
+            continue;
+        }
+
+        // Make sure the parent folder exists before writing the file into it.
+        char parentDir[MAX_PATH];
+        strncpy(parentDir, destPath, sizeof(parentDir) - 1);
+        parentDir[sizeof(parentDir) - 1] = '\0';
+        char *lastSlash = strrchr(parentDir, '\\');
+        if (lastSlash) {
+            *lastSlash = '\0';
+            CreateDirectoriesRecursive(parentDir);
+        }
+
+        if (!mz_zip_reader_extract_to_file(&zip, i, destPath, 0)) {
+            ok = false;
+            break;
+        }
+    }
+
+    mz_zip_reader_end(&zip);
+    return ok;
+}
+
 // ---- Main update flow ----
 static bool RunUpdate(GameArch arch, const char *targetExeName) {
     printf("[*] Checking latest release...\n");
@@ -433,11 +525,8 @@ static bool RunUpdate(GameArch arch, const char *targetExeName) {
     CreateDirectoryA(STAGING_DIR, NULL);
 
     printf("[*] Extracting update...\n");
-    char tarCmd[256];
-    snprintf(tarCmd, sizeof(tarCmd), "tar.exe -xf %s -C %s", ZIP_PACKAGE, STAGING_DIR);
-    int tarExit = RunCommandAndWait(tarCmd);
-    if (tarExit != 0) {
-        printf("[ERROR] Extraction failed (tar exit code %d). Update aborted, nothing was touched.\n", tarExit);
+    if (!ExtractZipToDirectory(ZIP_PACKAGE, STAGING_DIR)) {
+        printf("[ERROR] Extraction failed. Update aborted, nothing was touched.\n");
         DeleteFileA(ZIP_PACKAGE);
         DeleteDirectoryRecursive(STAGING_DIR);
         return false;

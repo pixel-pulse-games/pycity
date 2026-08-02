@@ -139,13 +139,17 @@ echo [!] Building Patcher.exe (32-bit, so it runs on any Windows install)...
 :: Patcher.exe covers every install regardless of which game architecture
 :: (win32/win64) it's updating.
 ::
+:: Zip extraction uses miniz (Patcher/miniz.c, miniz.h) instead of
+:: shelling out to tar.exe, since tar.exe is only guaranteed present on
+:: Windows 10 1803+.
+::
 :: The windres step embeds patcher.manifest (asInvoker) into the exe.
 :: Without it, Windows' installer-detection heuristic auto-elevates this
 :: exe via UAC on its own, since it's an unmanifested 32-bit binary whose
 :: name contains "patch" - see patcher.manifest for the full explanation.
 set "PATH=%W32_BIN_PATH%;%PATH%"
 windres Patcher/patcher.rc -O coff -o Patcher/patcher_res.o
-gcc Patcher/patcher.c Patcher/patcher_res.o -o Patcher.exe -lwininet -ladvapi32
+gcc Patcher/patcher.c Patcher/patcher_res.o Patcher/miniz.c -o Patcher.exe -lwininet -ladvapi32
 goto END
 
 :RESET_CONFIG
