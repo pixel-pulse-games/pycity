@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://sitemaps.org">
+    <!-- Main Game Landing Page -->
+    <url>
+        <loc>https://pycity.pages.dev</loc>
+        <lastmod>2026-08-01</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>1.0</priority>
+    </url>
+    
+    <!-- Main Release Download Channel -->
+    <url>
+        <loc>https://pycity.pages.dev/download</loc>
+        <lastmod>2026-08-01</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>0.9</priority>
+    </url>
+
+    <!-- Experimental Beta Download Channel -->
+    <url>
+        <loc>https://pycity.pages.dev/Beta-Download</loc>
+        <lastmod>2026-08-01</lastmod>
+        <changefreq>daily</changefreq>
+        <priority>0.8</priority>
+    </url>
+
+    <!-- Source Compilation Documentation Guide -->
+    <url>
+        <loc>https://pycity.pages.dev/Compiling</loc>
+        <lastmod>2026-08-01</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.7</priority>
+    </url>
+</urlset>

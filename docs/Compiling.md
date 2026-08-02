@@ -1,5 +1,9 @@
+---
+---
+
 <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
-# 🛠️ Compiling PyCity Natively on Windows
+
+### 🛠️ Compiling PyCity Natively on Windows
 
 [Home Page](index.md)
 
@@ -52,3 +56,4 @@ If you ever move your compiler directories, move your project folders, or type a
 1. Launch `build.bat` to pull up the menu interface.
 2. Press **`r`** to choose "Reset Configuration Paths".
 3. The script will wipe out your local `config.ini` file and immediately loop you back into the step-by-step setup wizard to put in fresh paths.
+

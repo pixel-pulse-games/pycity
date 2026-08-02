@@ -117,16 +117,31 @@ goto END
 
 :BUILD_BOTH
 echo.
-echo [!] Launching Parallel Dual-Architecture Build Threads...
-set "MAKE_64=make"
-if exist "%W64_BIN_PATH%\mingw32-make.exe" set "MAKE_64=mingw32-make"
-set "MAKE_32=make"
-if exist "%W32_BIN_PATH%\mingw32-make.exe" set "MAKE_32=mingw32-make"
-
-start /b cmd /c "set "PATH=%W64_BIN_PATH%;%%PATH%%" && "%MAKE_64%" OUT=pycity-win64.exe RAYLIB_DIR=raylib64/src"
-start /b cmd /c "set "PATH=%W32_BIN_PATH%;%%PATH%%" && "%MAKE_32%" OUT=pycity-win32.exe RAYLIB_DIR=raylib32/src"
-timeout /t 2 >nul
+echo [!] Building x64, then x86 (sequentially - see note below)...
+:: Deliberately sequential, not parallel. An earlier parallel version used
+:: `start /b cmd /c "set "PATH=...` and the nested quotes broke - the
+:: second quote right after `set ` closed the outer quoted string early,
+:: so PATH never actually got reassigned inside the subshell. Both builds
+:: silently ran with whatever PATH the outer script already had, which
+:: is how both ended up using the 64-bit toolchain. Sequential avoids the
+:: whole class of bug.
+call :BUILD_64_SUB
+call :BUILD_32_SUB
 goto END
+
+:BUILD_64_SUB
+set "PATH=%W64_BIN_PATH%;%PATH%"
+set "MAKE_CMD=make"
+if exist "%W64_BIN_PATH%\mingw32-make.exe" set "MAKE_CMD=mingw32-make"
+"%MAKE_CMD%" OUT=pycity-win64.exe RAYLIB_DIR=raylib64/src
+exit /b
+
+:BUILD_32_SUB
+set "PATH=%W32_BIN_PATH%;%PATH%"
+set "MAKE_CMD=make"
+if exist "%W32_BIN_PATH%\mingw32-make.exe" set "MAKE_CMD=mingw32-make"
+"%MAKE_CMD%" OUT=pycity-win32.exe RAYLIB_DIR=raylib32/src
+exit /b
 
 :BUILD_PATCHER
 echo.

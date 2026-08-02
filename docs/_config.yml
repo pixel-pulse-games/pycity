@@ -1,1 +1,16 @@
+theme: jekyll-theme-cayman
 
+title: PyCity
+description: A road-building city simulation game.
+
+url: "https://pycity.pages.dev"
+baseurl: ""
+
+plugins:
+  - jekyll-relative-links
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: "default"

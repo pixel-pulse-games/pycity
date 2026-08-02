@@ -1,6 +1,12 @@
+---
+---
+
 <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
-# Download (Windows) — PyCity 
+
+### Download (Windows) — PyCity 
+
 <script src="theme.js"></script> 
+
 
 [Home](index.md) · **Download** [Beta Download](Beta-Download.md)
 
@@ -38,3 +44,4 @@
 
 --- 
 PyCity — alpha in progress. [Source](https://github.com/m97493578-ops/PyCity)
+
