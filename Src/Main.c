@@ -4,7 +4,8 @@
 // simple supply/demand economy.
 //
 // Controls:
-//   1 = Road tool     2 = House tool     3 = Factory tool   4 = Farm tool   5 = Bulldoze
+//   1 = Road tool     2 = House tool     3 = Factory tool   4 = Farm tool
+//   5 = Police tool   6 = Bulldoze
 //   Left click        = place/remove on hovered tile
 //   Arrows / WASD     = pan camera
 //   Space             = pause/unpause simulation
@@ -12,13 +13,23 @@
 //   Esc               = quit
 //
 // Money: building costs money (road $10, house $50, factory $150, farm
-// $100), houses pay a flat tax over time regardless of how well they're
-// served, and there's no debt - insufficient funds just blocks placement.
-// Bulldozing refunds 50% of a tile's build cost.
+// $100, police station $200), houses pay a flat tax over time regardless of
+// how well they're served, and there's no debt - insufficient funds just
+// blocks placement. Bulldozing refunds 50% of a tile's build cost.
 //
 // Economy chain: farms grow food (supply) -> trucks haul it to factories that
 // need it (demand) -> factories turn it into goods (supply) -> trucks haul
 // THOSE to houses that need them (demand). Two truck routes, not one.
+//
+// Road congestion: every road tile tracks how much truck traffic has
+// recently passed over it. Heavily-used tiles slow trucks down (and are
+// drawn with a red tint), which naturally discourages funneling every
+// route through one choke point - a second parallel road relieves it.
+//
+// Police & crime: houses not within range of a police station slowly build
+// up crime; crime decays back down for houses that are covered. Houses with
+// high crime have a chance each frame of a theft event that drains a bit of
+// money. Build police stations to keep crime (and theft) in check.
 //
 // April Fools: if the real-world date is April 1st, the game periodically
 // scatters silly decorative items on empty grass tiles. Purely cosmetic.
@@ -75,7 +86,12 @@
 #define MAX_PATH (MAP_COLS*MAP_ROWS)
 
 #define SAVE_FILE "savegame.dat"
-#define SAVE_MAGIC 0x50434954 // "PCIT"
+// Bumped from 0x50434954 ("PCIT") because Building grew a `crime` field
+// this release - an old save read with the new struct layout would
+// silently misalign every field after it, so old saves must be rejected
+// rather than partially loaded. LoadGame() already treats a magic
+// mismatch as "corrupt or incompatible version" and just starts fresh.
+#define SAVE_MAGIC 0x50434932 // "PCI2"
 
 // ---- Money tuning ----
 #define STARTING_MONEY 500.0
@@ -83,8 +99,24 @@
 #define COST_HOUSE    50.0
 #define COST_FACTORY 150.0
 #define COST_FARM    100.0
+#define COST_POLICE  200.0
 #define TAX_PER_HOUSE_PER_FRAME 0.02 // flat per house, regardless of how well it's served
 #define BULLDOZE_REFUND_PERCENT 0.5  // partial refund only, so build-then-bulldoze isn't free money
+
+// ---- Police & crime tuning ----
+#define POLICE_COVERAGE_RADIUS 9       // tiles (Manhattan distance) a station protects
+#define CRIME_GROWTH_PER_FRAME 0.03f   // how fast crime rises on an uncovered house
+#define CRIME_DECAY_PER_FRAME  0.08f   // how fast crime falls on a covered house (faster than it grows)
+#define THEFT_CRIME_THRESHOLD 70.0f    // crime has to be at least this high for theft to be possible
+#define THEFT_CHANCE_PER_FRAME 400     // 1-in-N per frame per eligible house
+#define THEFT_AMOUNT 8.0               // flat money stolen per theft event
+
+// ---- Road congestion tuning ----
+#define CONGESTION_PER_TRUCK_PER_FRAME 3.0f // added to a road tile for every truck currently on it
+#define CONGESTION_DECAY_PER_FRAME 1.0f     // how fast a tile's congestion drains back to 0
+#define CONGESTION_MAX 100.0f
+#define CONGESTION_SLOWDOWN_THRESHOLD 30.0f // congestion below this doesn't slow trucks at all
+#define CONGESTION_MAX_SLOWDOWN 0.7f        // at CONGESTION_MAX, trucks move at (1 - this) of normal speed
 
 static double money = STARTING_MONEY;
 #define DEMAND_GROWTH_PER_FRAME 0.04f      // how fast a house's demand fills up
@@ -101,11 +133,13 @@ static double money = STARTING_MONEY;
 // ---- Winter tuning ----
 // (no cap needed - winter uses specific named tiles, see LoadAllAssets)
 
-typedef enum { TILE_EMPTY = 0, TILE_ROAD, TILE_HOUSE, TILE_FACTORY, TILE_FARM, TOTAL_TILE_TYPES } TileType;
-// TILE_FARM is appended after TILE_FACTORY (not inserted earlier) so the
-// integer value of every existing tile type is unchanged - old savegame.dat
-// files still load correctly.
-typedef enum { TOOL_ROAD = 0, TOOL_HOUSE, TOOL_FACTORY, TOOL_FARM, TOOL_BULLDOZE } Tool;
+typedef enum { TILE_EMPTY = 0, TILE_ROAD, TILE_HOUSE, TILE_FACTORY, TILE_FARM, TILE_POLICE, TOTAL_TILE_TYPES } TileType;
+// TILE_FARM and TILE_POLICE are appended in release order (not inserted
+// earlier) so the integer value of every previously-existing tile type is
+// unchanged - this matters for old savegame.dat compatibility, though see
+// the SAVE_MAGIC bump below: the Building struct itself changed shape this
+// release, so old saves are rejected anyway rather than silently misread.
+typedef enum { TOOL_ROAD = 0, TOOL_HOUSE, TOOL_FACTORY, TOOL_FARM, TOOL_POLICE, TOOL_BULLDOZE } Tool;
 
 // Cost to place one tile of a given type. Also used to compute the
 // bulldoze refund (see BULLDOZE_REFUND_PERCENT).
@@ -115,6 +149,7 @@ static double GetBuildCost(TileType type) {
         case TILE_HOUSE:   return COST_HOUSE;
         case TILE_FACTORY: return COST_FACTORY;
         case TILE_FARM:    return COST_FARM;
+        case TILE_POLICE:  return COST_POLICE;
         default:           return 0.0;
     }
 }
@@ -122,6 +157,12 @@ static double GetBuildCost(TileType type) {
 #define TOTAL_GRASS_VARIANTS 3
 
 static TileType grid[MAP_ROWS][MAP_COLS];
+
+// How much recent truck traffic has passed over each road tile, 0-100.
+// Rises while trucks are on a tile, decays back toward 0 otherwise. Not
+// part of the save format - it's transient traffic, not world state - so
+// it always starts at 0 after a fresh load, same as trucks[] does.
+static float roadCongestion[MAP_ROWS][MAP_COLS];
 
 // Textures indexed by TileType. gameAssets[TILE_EMPTY] is left blank on
 // purpose - empty tiles are drawn using grassTextures[] instead (see below),
@@ -147,6 +188,7 @@ typedef struct {
     TileType type;
     float demand;
     float supply;
+    float crime; // TILE_HOUSE only: 0-100, see POLICE_COVERAGE_RADIUS / THEFT_* above
 } Building;
 
 static Building buildings[MAX_BUILDINGS];
@@ -350,6 +392,19 @@ static void SpawnTruck(void) {
     }
 }
 
+// True if any police station is within POLICE_COVERAGE_RADIUS (Manhattan
+// distance) of the given tile. Straightforward linear scan - buildingCount
+// is capped at MAX_BUILDINGS (128), so this is cheap even called once per
+// house per frame.
+static bool IsCoveredByPolice(int r, int c) {
+    for (int i = 0; i < buildingCount; i++) {
+        if (buildings[i].type != TILE_POLICE) continue;
+        int dist = abs(buildings[i].r - r) + abs(buildings[i].c - c);
+        if (dist <= POLICE_COVERAGE_RADIUS) return true;
+    }
+    return false;
+}
+
 static void UpdateBuildings(void) {
     for (int i = 0; i < buildingCount; i++) {
         if (buildings[i].type == TILE_HOUSE) {
@@ -360,6 +415,25 @@ static void UpdateBuildings(void) {
             }
             // Flat tax, regardless of how well this house is being served.
             money += TAX_PER_HOUSE_PER_FRAME;
+
+            // Crime rises when a house is outside every police station's
+            // coverage radius, and decays (faster than it rises) when
+            // it's covered. A house with high enough crime has a small
+            // per-frame chance of a theft event draining some money -
+            // a concrete reason to actually build police stations rather
+            // than just a cosmetic number.
+            if (IsCoveredByPolice(buildings[i].r, buildings[i].c)) {
+                buildings[i].crime -= CRIME_DECAY_PER_FRAME;
+                if (buildings[i].crime < 0.0f) buildings[i].crime = 0.0f;
+            } else {
+                buildings[i].crime += CRIME_GROWTH_PER_FRAME;
+                if (buildings[i].crime > 100.0f) buildings[i].crime = 100.0f;
+            }
+            if (buildings[i].crime >= THEFT_CRIME_THRESHOLD &&
+                GetRandomValue(0, THEFT_CHANCE_PER_FRAME) == 0) {
+                money -= THEFT_AMOUNT;
+                if (money < 0) money = 0;
+            }
         } else if (buildings[i].type == TILE_FARM) {
             if (buildings[i].supply < 100.0f) {
                 buildings[i].supply += SUPPLY_GROWTH_PER_FRAME;
@@ -399,7 +473,32 @@ static void DeliverToBuilding(int buildingIdx) {
     }
 }
 
+// Converts a road tile's congestion (0..CONGESTION_MAX) into a speed
+// multiplier: 1.0 below CONGESTION_SLOWDOWN_THRESHOLD, tapering linearly
+// down to (1 - CONGESTION_MAX_SLOWDOWN) at full congestion.
+static float CongestionSpeedFactor(int r, int c) {
+    float cong = roadCongestion[r][c];
+    if (cong <= CONGESTION_SLOWDOWN_THRESHOLD) return 1.0f;
+    float span = CONGESTION_MAX - CONGESTION_SLOWDOWN_THRESHOLD;
+    float over = cong - CONGESTION_SLOWDOWN_THRESHOLD;
+    float pct = (span > 0.0f) ? (over / span) : 1.0f;
+    if (pct > 1.0f) pct = 1.0f;
+    return 1.0f - pct * CONGESTION_MAX_SLOWDOWN;
+}
+
 static void UpdateTrucks(void) {
+    // Congestion decays everywhere first, then gets topped back up below by
+    // whichever trucks are currently sitting on a given tile - so a tile
+    // stays "hot" only as long as trucks keep passing through it.
+    for (int r = 0; r < MAP_ROWS; r++) {
+        for (int c = 0; c < MAP_COLS; c++) {
+            if (roadCongestion[r][c] > 0.0f) {
+                roadCongestion[r][c] -= CONGESTION_DECAY_PER_FRAME;
+                if (roadCongestion[r][c] < 0.0f) roadCongestion[r][c] = 0.0f;
+            }
+        }
+    }
+
     for (int i = 0; i < MAX_TRUCKS; i++) {
         if (!trucks[i].active) continue;
         Truck *tr = &trucks[i];
@@ -409,7 +508,12 @@ static void UpdateTrucks(void) {
             DeliverToBuilding(tr->toBuildingIdx);
             continue;
         }
-        tr->t += tr->speed;
+
+        int curR = tr->pathR[tr->idx], curC = tr->pathC[tr->idx];
+        roadCongestion[curR][curC] += CONGESTION_PER_TRUCK_PER_FRAME;
+        if (roadCongestion[curR][curC] > CONGESTION_MAX) roadCongestion[curR][curC] = CONGESTION_MAX;
+
+        tr->t += tr->speed * CongestionSpeedFactor(curR, curC);
         if (tr->t >= 1.0f) {
             tr->t = 0;
             tr->idx++;
@@ -477,6 +581,15 @@ static void DrawBuildingMeter(Building *b) {
         barColor = (pct > 0.5f) ? (Color){90,170,90,255} : (pct > 0.2f) ? (Color){242,193,78,255} : (Color){120,120,120,255};
     }
     DrawMeterBar(x, y, w, h, pct, barColor);
+
+    // Second bar for houses only: crime, purple-ish so it reads as a
+    // different signal from the blue/red/green demand bar above it.
+    // Only drawn once there's actually some crime, so a well-policed
+    // house doesn't show a second empty bar for no reason.
+    if (b->type == TILE_HOUSE && b->crime > 0.5f) {
+        float crimePct = b->crime / 100.0f;
+        DrawMeterBar(x, y - TILE*0.12f, w, h, crimePct, (Color){170,70,190,255});
+    }
 }
 
 static void AddBuilding(int r, int c, TileType type) {
@@ -488,6 +601,7 @@ static void AddBuilding(int r, int c, TileType type) {
     // Farms start half-grown, same as factories used to. Factories now
     // start with nothing to ship - they need a farm delivery first.
     buildings[buildingCount].supply = (type == TILE_FARM) ? 50.0f : 0.0f;
+    buildings[buildingCount].crime = 0.0f;
     buildingCount++;
 }
 
@@ -618,6 +732,7 @@ static void DrawTile(TileType type, int r, int c, int x, int y) {
         case TILE_HOUSE:   fallback = (Color){76,110,156,255}; break;
         case TILE_FACTORY: fallback = (Color){255,107,53,255}; break;
         case TILE_FARM:    fallback = (Color){196,164,60,255}; break; // wheat gold
+        case TILE_POLICE:  fallback = (Color){60,70,140,255};  break; // dark blue - no art asset yet, flat color only
         default: break;
     }
 
@@ -638,6 +753,19 @@ static void DrawTile(TileType type, int r, int c, int x, int y) {
     } else {
         DrawRectangle(x, y, TILE-1, TILE-1, fallback);
     }
+}
+
+// Tints a road tile red, proportional to its current congestion, so busy
+// choke points are visible at a glance. Drawn as a translucent overlay on
+// top of the tile's normal texture/fallback rather than replacing it.
+static void DrawCongestionOverlay(int r, int c, int x, int y) {
+    if (grid[r][c] != TILE_ROAD) return;
+    float cong = roadCongestion[r][c];
+    if (cong <= CONGESTION_SLOWDOWN_THRESHOLD) return;
+    float pct = (cong - CONGESTION_SLOWDOWN_THRESHOLD) / (CONGESTION_MAX - CONGESTION_SLOWDOWN_THRESHOLD);
+    if (pct > 1.0f) pct = 1.0f;
+    unsigned char alpha = (unsigned char)(pct * 140);
+    DrawRectangle(x, y, TILE, TILE, (Color){200, 40, 30, alpha});
 }
 
 // Checks the REAL-WORLD system date, not anything in-game. Only ever
@@ -788,6 +916,8 @@ static bool LoadGame(void) {
 
     // Clear any in-flight trucks - their paths reference the old world state.
     memset(trucks, 0, sizeof(trucks));
+    // Congestion is transient traffic, not world state - start fresh.
+    memset(roadCongestion, 0, sizeof(roadCongestion));
     // April Fools props are cosmetic-only and aren't part of the save
     // format, so just clear them out rather than leaving stale ones around.
     ResetAprilFoolsItems();
@@ -806,6 +936,7 @@ int main(void) {
 
     memset(grid, TILE_EMPTY, sizeof(grid));
     memset(trucks, 0, sizeof(trucks));
+    memset(roadCongestion, 0, sizeof(roadCongestion));
     ResetAprilFoolsItems();
 
     Tool tool = TOOL_ROAD;
@@ -818,7 +949,8 @@ int main(void) {
         if (IsKeyPressed(KEY_TWO))   tool = TOOL_HOUSE;
         if (IsKeyPressed(KEY_THREE)) tool = TOOL_FACTORY;
         if (IsKeyPressed(KEY_FOUR))  tool = TOOL_FARM;
-        if (IsKeyPressed(KEY_FIVE)) tool = TOOL_BULLDOZE;
+        if (IsKeyPressed(KEY_FIVE))  tool = TOOL_POLICE;
+        if (IsKeyPressed(KEY_SIX))   tool = TOOL_BULLDOZE;
         if (IsKeyPressed(KEY_SPACE)) paused = !paused;
         if (IsKeyPressed(KEY_F5)) SaveGame();
         if (IsKeyPressed(KEY_F9)) LoadGame();
@@ -866,10 +998,17 @@ int main(void) {
                         money -= COST_FARM;
                     }
                     break;
+                case TOOL_POLICE:
+                    if (grid[r][c] == TILE_EMPTY && money >= COST_POLICE) {
+                        grid[r][c] = TILE_POLICE;
+                        AddBuilding(r,c,TILE_POLICE);
+                        money -= COST_POLICE;
+                    }
+                    break;
                 case TOOL_BULLDOZE:
                     if (grid[r][c] != TILE_EMPTY) {
                         money += GetBuildCost(grid[r][c]) * BULLDOZE_REFUND_PERCENT;
-                        if (grid[r][c] == TILE_HOUSE || grid[r][c] == TILE_FACTORY || grid[r][c] == TILE_FARM) RemoveBuildingAt(r,c);
+                        if (grid[r][c] == TILE_HOUSE || grid[r][c] == TILE_FACTORY || grid[r][c] == TILE_FARM || grid[r][c] == TILE_POLICE) RemoveBuildingAt(r,c);
                         grid[r][c] = TILE_EMPTY;
                     }
                     break;
@@ -897,6 +1036,7 @@ int main(void) {
                 int x = (cc - camC)*TILE;
                 int y = TOP_BAR + (rr - camR)*TILE;
                 DrawTile(grid[rr][cc], rr, cc, x, y);
+                DrawCongestionOverlay(rr, cc, x, y);
             }
         }
 
@@ -917,12 +1057,13 @@ int main(void) {
 
         // toolbar (drawn last so it sits on top of the map)
         DrawRectangle(0, 0, SCREEN_W, TOP_BAR, (Color){28,35,33,255});
-        const char *toolNames[5] = {
+        const char *toolNames[6] = {
             "ROAD (1) $10", 
             "HOUSE (2) $50",
             "FACTORY (3) $150",
             "FARM (4) $100", 
-            "BULLDOZE (5)"
+            "POLICE (5) $200",
+            "BULLDOZE (6)"
         };
         DrawText(TextFormat("Tool: %s", toolNames[tool]), 10, 8, 18, (Color){255,107,53,255});
 

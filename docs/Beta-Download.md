@@ -6,11 +6,15 @@
 
 
 # 64 bit
-[Download Beta/Alpha — .zip 64 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.5b/pycity-win64.zip)
+[Download Beta/Alpha — .zip 64 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.7/pycity-win64.zip)
 
 # 32 bit
 
-[Download Beta/Alpha — .zip 32 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.5b/pycity-win32.zip) 
+[Download Beta/Alpha — .zip 32 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.7/pycity-win32.zip) 
+
+# Updating from an older save?
+ 
+The crime & police update changed the save format — if your city won't load after updating, convert your save file first: [Update Your Saves](save_convert.html)
 
 
 <div id="latest-release-info">Loading version notes...</div>

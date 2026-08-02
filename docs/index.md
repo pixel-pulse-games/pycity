@@ -15,7 +15,7 @@ A road-building city sim. Zone the city, connect it, keep traffic moving.
 
 ## News
 
-There is a New build to download!
+There's an update where we added crime and police! Coming from v0.0.6 or before? Make sure to update your saves — old saves will be marked invalid on the new build, but the fix is quick: [Update Your Saves](save_convert.html)
 
 ## Status
 

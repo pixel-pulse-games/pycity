@@ -24,6 +24,10 @@
 
 [Download the Updater 64 and 32 bit](https://github.com/pycity-project/pycity-project.github.io/releases/latest/download/patcher.zip)
 
+# Updating from an older save?
+ 
+The crime & police update changed the save format — if your city won't load after updating, convert your save file first: [Update Your Saves](save_convert.html)
+
 
 
 # Beta Builds

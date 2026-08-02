@@ -1,0 +1,349 @@
+<div id="pc-root"></div>
+<style>
+  #pc-root {
+    --bg: #151a18;
+    --panel: #1c2321;
+    --panel-line: #2c3532;
+    --text: #ede8de;
+    --dim: #a0a89f;
+    --accent: #ff6b35;
+    --accent-dim: #ff6b3522;
+    --good: #5aa25a;
+    --bad: #dc3c32;
+    font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+    color: var(--text);
+    background: var(--bg);
+    min-height: 100%;
+    padding: 40px 20px 60px;
+    box-sizing: border-box;
+  }
+  #pc-root * { box-sizing: border-box; }
+
+  .pc-wrap { max-width: 640px; margin: 0 auto; }
+
+  .pc-eyebrow {
+    color: var(--accent);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin: 0 0 6px;
+  }
+  .pc-title {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+  }
+  .pc-sub {
+    color: var(--dim);
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 0 0 28px;
+    max-width: 52ch;
+  }
+  .pc-sub code { color: var(--text); background: var(--panel); padding: 1px 5px; border-radius: 3px; }
+
+  .pc-drop {
+    border: 2px dashed var(--panel-line);
+    border-radius: 10px;
+    background: var(--panel);
+    padding: 36px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+    position: relative;
+  }
+  .pc-drop:hover, .pc-drop.pc-drag {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+  .pc-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .pc-drop-icon {
+    width: 40px; height: 40px; margin: 0 auto 14px;
+    border: 2px solid var(--dim); border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--dim); font-size: 18px;
+  }
+  .pc-drop-main { font-size: 15px; margin-bottom: 4px; }
+  .pc-drop-main b { color: var(--accent); font-weight: 600; }
+  .pc-drop-sub { font-size: 12px; color: var(--dim); }
+
+  .pc-log {
+    margin-top: 22px;
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+    border-radius: 8px;
+    padding: 16px 18px;
+    font-size: 13px;
+    line-height: 1.7;
+    display: none;
+  }
+  .pc-log.pc-show { display: block; }
+  .pc-log-row { display: flex; gap: 10px; align-items: baseline; }
+  .pc-log-row + .pc-log-row { margin-top: 2px; }
+  .pc-tag {
+    flex: none;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: var(--bg);
+    background: var(--dim);
+    min-width: 42px;
+    text-align: center;
+  }
+  .pc-tag.ok { background: var(--good); }
+  .pc-tag.err { background: var(--bad); }
+  .pc-tag.info { background: var(--accent); }
+
+  .pc-result {
+    margin-top: 18px;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    background: var(--panel);
+    border: 1px solid var(--good);
+    border-radius: 8px;
+    padding: 16px 18px;
+  }
+  .pc-result.pc-show { display: flex; }
+  .pc-result-name { font-size: 14px; }
+  .pc-result-name .pc-fn { color: var(--accent); }
+  .pc-dl {
+    flex: none;
+    background: var(--accent);
+    color: #1c1310;
+    font-weight: 700;
+    font-size: 13px;
+    padding: 10px 18px;
+    border-radius: 6px;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .pc-dl:hover { filter: brightness(1.08); }
+
+  .pc-again {
+    display: block;
+    margin: 14px auto 0;
+    background: none;
+    border: 1px solid var(--panel-line);
+    color: var(--dim);
+    font: inherit;
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .pc-again:hover { color: var(--text); border-color: var(--dim); }
+
+  .pc-foot {
+    margin-top: 34px;
+    padding-top: 18px;
+    border-top: 1px solid var(--panel-line);
+    color: var(--dim);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+</style>
+
+<script>
+(function () {
+  const root = document.getElementById('pc-root');
+
+  const MAP_ROWS = 40, MAP_COLS = 60;
+  const GRID_CELLS = MAP_ROWS * MAP_COLS;
+  const GRID_BYTES = GRID_CELLS * 4; // TileType stored as 4-byte int
+  const OLD_MAGIC = 0x50434954; // "PCIT"
+  const NEW_MAGIC = 0x50434932; // "PCI2"
+  const MAX_BUILDINGS = 128;
+  const STARTING_MONEY = 500.0;
+  const OLD_BUILDING_BYTES = 20; // r,c,type (int32 x3) + demand,supply (f32 x2)
+  const NEW_BUILDING_BYTES = 24; // above + crime (f32)
+
+  root.innerHTML = `
+    <div class="pc-wrap">
+      <p class="pc-eyebrow">PyCity</p>
+      <h1 class="pc-title">Save converter</h1>
+      <p class="pc-sub">
+        The police/crime update added a field to every building, so old
+        <code>savegame.dat</code> files get rejected as incompatible.
+        Drop one in below and get back a version the new build will load,
+        with everyone's crime meter starting at zero.
+      </p>
+
+      <label class="pc-drop" id="pcDrop">
+        <input type="file" id="pcFile" accept=".dat" />
+        <div class="pc-drop-icon">↑</div>
+        <div class="pc-drop-main"><b>Choose</b> or drop your savegame.dat</div>
+        <div class="pc-drop-sub">Converted entirely in your browser — nothing is uploaded anywhere</div>
+      </label>
+
+      <div class="pc-log" id="pcLog"></div>
+
+      <div class="pc-result" id="pcResult">
+        <div class="pc-result-name">Ready: <span class="pc-fn" id="pcOutName">savegame.dat</span></div>
+        <a class="pc-dl" id="pcDl" download="savegame.dat">Download</a>
+      </div>
+      <button class="pc-again" id="pcAgain" style="display:none">Convert another file</button>
+
+      <div class="pc-foot">
+        Expects the pre-police save layout: 60×40 grid, a building list
+        (position, type, demand, supply), delivery count, and totals. Files
+        that don't match that shape — including ones already on the new
+        format — are left alone and reported below.
+      </div>
+    </div>
+  `;
+
+  const drop = root.querySelector('#pcDrop');
+  const fileInput = root.querySelector('#pcFile');
+  const logEl = root.querySelector('#pcLog');
+  const resultEl = root.querySelector('#pcResult');
+  const dlEl = root.querySelector('#pcDl');
+  const outNameEl = root.querySelector('#pcOutName');
+  const againBtn = root.querySelector('#pcAgain');
+
+  function log(rows) {
+    logEl.innerHTML = rows.map(([tag, text]) =>
+      `<div class="pc-log-row"><span class="pc-tag ${tag}">${tag}</span><span>${text}</span></div>`
+    ).join('');
+    logEl.classList.add('pc-show');
+  }
+
+  function reset() {
+    logEl.classList.remove('pc-show');
+    resultEl.classList.remove('pc-show');
+    againBtn.style.display = 'none';
+    fileInput.value = '';
+  }
+  againBtn.addEventListener('click', reset);
+
+  ['dragenter', 'dragover'].forEach(evt =>
+    drop.addEventListener(evt, e => { e.preventDefault(); drop.classList.add('pc-drag'); })
+  );
+  ['dragleave', 'drop'].forEach(evt =>
+    drop.addEventListener(evt, e => { e.preventDefault(); drop.classList.remove('pc-drag'); })
+  );
+  drop.addEventListener('drop', e => {
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  });
+  fileInput.addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (f) handleFile(f);
+  });
+
+  function handleFile(file) {
+    resultEl.classList.remove('pc-show');
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        convert(file.name, reader.result);
+      } catch (err) {
+        log([['err', 'Could not read this file: ' + err.message]]);
+      }
+    };
+    reader.onerror = () => log([['err', 'Browser could not read the file.']]);
+    reader.readAsArrayBuffer(file);
+  }
+
+  function convert(name, buf) {
+    const rows = [];
+    const view = new DataView(buf);
+    let off = 0;
+
+    function need(n, what) {
+      if (off + n > buf.byteLength) throw new Error(`file ended early while reading ${what}`);
+    }
+
+    need(4, 'magic number');
+    const magic = view.getInt32(off, true); off += 4;
+
+    if (magic === NEW_MAGIC) {
+      log([['ok', 'This file is already in the current format — nothing to do.']]);
+      return;
+    }
+    if (magic !== OLD_MAGIC) {
+      log([['err', `Unrecognized magic number (0x${magic.toString(16)}). This doesn't look like a PyCity savegame.dat.`]]);
+      return;
+    }
+    rows.push(['ok', 'Recognized old save format (PCIT).']);
+
+    need(GRID_BYTES, 'the map grid');
+    const gridBytes = buf.slice(off, off + GRID_BYTES); off += GRID_BYTES;
+    rows.push(['info', `Read ${MAP_COLS}×${MAP_ROWS} grid unchanged.`]);
+
+    need(4, 'building count');
+    const buildingCount = view.getInt32(off, true); off += 4;
+    if (buildingCount < 0 || buildingCount > MAX_BUILDINGS) {
+      log([['err', `Building count (${buildingCount}) is out of range 0–${MAX_BUILDINGS} — file is likely corrupt.`]]);
+      return;
+    }
+
+    need(buildingCount * OLD_BUILDING_BYTES, 'the building list');
+    const buildings = [];
+    for (let i = 0; i < buildingCount; i++) {
+      const r = view.getInt32(off, true); off += 4;
+      const c = view.getInt32(off, true); off += 4;
+      const type = view.getInt32(off, true); off += 4;
+      const demand = view.getFloat32(off, true); off += 4;
+      const supply = view.getFloat32(off, true); off += 4;
+      buildings.push({ r, c, type, demand, supply });
+    }
+    rows.push(['ok', `Migrated ${buildingCount} building${buildingCount === 1 ? '' : 's'} — each gets crime = 0.`]);
+
+    need(4, 'delivery count');
+    const deliveries = view.getInt32(off, true); off += 4;
+
+    need(8, 'total demand generated');
+    const totalDemandGenerated = view.getFloat64(off, true); off += 8;
+
+    need(8, 'total demand served');
+    const totalDemandServed = view.getFloat64(off, true); off += 8;
+
+    let money = STARTING_MONEY;
+    if (off + 8 <= buf.byteLength) {
+      money = view.getFloat64(off, true); off += 8;
+      rows.push(['info', `Money carried over: $${money.toFixed(0)}.`]);
+    } else {
+      rows.push(['info', `No money field in this save (very old file) — starting at $${money.toFixed(0)}.`]);
+    }
+
+    // ---- write new format ----
+    const outBytes = 4 + GRID_BYTES + 4 + buildingCount * NEW_BUILDING_BYTES + 4 + 8 + 8 + 8;
+    const outBuf = new ArrayBuffer(outBytes);
+    const outView = new DataView(outBuf);
+    let o = 0;
+
+    outView.setInt32(o, NEW_MAGIC, true); o += 4;
+    new Uint8Array(outBuf, o, GRID_BYTES).set(new Uint8Array(gridBytes)); o += GRID_BYTES;
+    outView.setInt32(o, buildingCount, true); o += 4;
+    for (const b of buildings) {
+      outView.setInt32(o, b.r, true); o += 4;
+      outView.setInt32(o, b.c, true); o += 4;
+      outView.setInt32(o, b.type, true); o += 4;
+      outView.setFloat32(o, b.demand, true); o += 4;
+      outView.setFloat32(o, b.supply, true); o += 4;
+      outView.setFloat32(o, 0.0, true); o += 4; // crime, starts at 0
+    }
+    outView.setInt32(o, deliveries, true); o += 4;
+    outView.setFloat64(o, totalDemandGenerated, true); o += 8;
+    outView.setFloat64(o, totalDemandServed, true); o += 8;
+    outView.setFloat64(o, money, true); o += 8;
+
+    rows.push(['ok', 'Converted successfully.']);
+    log(rows);
+
+    const blob = new Blob([outBuf], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const outName = name.replace(/\.dat$/i, '') + '_converted.dat';
+    dlEl.href = url;
+    dlEl.download = outName;
+    outNameEl.textContent = outName;
+    resultEl.classList.add('pc-show');
+    againBtn.style.display = 'block';
+  }
+})();
+</script>
