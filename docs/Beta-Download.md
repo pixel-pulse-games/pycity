@@ -6,11 +6,11 @@
 
 
 # 64 bit
-[Download Beta/Alpha — .zip 64 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.7/pycity-win64.zip)
+[Download Beta/Alpha — .zip 64 bit](https://github.com/pixel-pulse-games/pycity/releases/download/v0.0.7/pycity-win64.zip)
 
 # 32 bit
 
-[Download Beta/Alpha — .zip 32 bit](https://github.com/pycity-project/pycity-project.github.io/releases/download/v0.0.7/pycity-win32.zip) 
+[Download Beta/Alpha — .zip 32 bit](https://github.com/pixel-pulse-games/pycity/releases/download/v0.0.7/pycity-win32.zip) 
 
 # Updating from an older save?
  
