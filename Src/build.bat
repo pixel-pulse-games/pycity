@@ -84,6 +84,7 @@ echo 1) x64 Production Build (64-bit Core Binary)
 echo 2) x86 Legacy Compatibility Build (32-bit Core Binary)
 echo 3) Build Both Architectures (Simultaneously)
 echo 4) Build Patcher (Patcher.exe, 32-bit - runs on 32-bit and 64-bit Windows)
+echo 5) Build Bootstrap (Bootstrap.exe, 32-bit - updates Patcher.exe itself)
 echo r) Reset Configuration Paths
 echo q) Exit Builder
 echo ========================================================
@@ -93,6 +94,7 @@ if "%choice%"=="1" goto BUILD_64
 if "%choice%"=="2" goto BUILD_32
 if "%choice%"=="3" goto BUILD_BOTH
 if "%choice%"=="4" goto BUILD_PATCHER
+if "%choice%"=="5" goto BUILD_BOOTSTRAP
 if "%choice%"=="r" goto RESET_CONFIG
 if "%choice%"=="q" exit
 goto MENU
@@ -165,6 +167,30 @@ echo [!] Building Patcher.exe (32-bit, so it runs on any Windows install)...
 set "PATH=%W32_BIN_PATH%;%PATH%"
 windres Patcher/patcher.rc -O coff -o Patcher/patcher_res.o
 gcc Patcher/patcher.c Patcher/patcher_res.o Patcher/miniz.c -o Patcher.exe -lwininet -ladvapi32
+goto END
+
+:BUILD_BOOTSTRAP
+echo.
+echo [!] Building Bootstrap.exe (32-bit - installs new Patcher.exe builds)...
+:: Bootstrap.exe exists because Patcher.exe can't overwrite itself while
+:: it's the running process - Windows won't allow that. So Bootstrap is a
+:: separate exe whose only job is fetching the latest Patcher.zip,
+:: verifying it against checksums.txt, and swapping it into place. See
+:: Bootstrap/Bootstrap.c's header comment for the full flow.
+::
+:: Built 32-bit for the same reason Patcher.exe is: one build covers both
+:: 32-bit and 64-bit Windows via WOW64.
+::
+:: Reuses Patcher/miniz.c and Patcher/miniz.h for zip extraction rather
+:: than duplicating them - hence the -I Patcher include path so
+:: Bootstrap.c's #include "miniz.h" resolves.
+::
+:: No manifest/windres step needed here (unlike Patcher.exe): Windows'
+:: installer-detection UAC auto-elevation heuristic keys off filenames
+:: containing "patch", "setup", "install", or "update" - "Bootstrap"
+:: doesn't match any of those, so it launches normally without prompting.
+set "PATH=%W32_BIN_PATH%;%PATH%"
+gcc Bootstrap/Bootstrap.c Patcher/miniz.c -I Patcher -o Bootstrap.exe -lwininet -ladvapi32
 goto END
 
 :RESET_CONFIG
