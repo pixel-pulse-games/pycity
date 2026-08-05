@@ -155,22 +155,31 @@
   const MAP_ROWS = 40, MAP_COLS = 60;
   const GRID_CELLS = MAP_ROWS * MAP_COLS;
   const GRID_BYTES = GRID_CELLS * 4; // TileType stored as 4-byte int
-  const OLD_MAGIC = 0x50434954; // "PCIT"
-  const NEW_MAGIC = 0x50434932; // "PCI2"
+  const MAGIC_PCIT = 0x50434954; // "PCIT" - oldest supported: no crime, no resourceType
+  const MAGIC_PCI2 = 0x50434932; // "PCI2" - has crime, no resourceType
+  const MAGIC_PCI3 = 0x50434933; // "PCI3" - current: has crime + resourceType
   const MAX_BUILDINGS = 128;
   const STARTING_MONEY = 500.0;
-  const OLD_BUILDING_BYTES = 20; // r,c,type (int32 x3) + demand,supply (f32 x2)
-  const NEW_BUILDING_BYTES = 24; // above + crime (f32)
+  const BUILDING_BYTES_PCIT = 20; // r,c,type (int32 x3) + demand,supply (f32 x2)
+  const BUILDING_BYTES_PCI2 = 24; // above + crime (f32)
+  const BUILDING_BYTES_PCI3 = 28; // above + resourceType (int32)
+  // TileType values from Main.c's enum - only buildings of these types
+  // actually participate in a resource chain (see AddBuilding/Main.c);
+  // everything else (currently just TILE_POLICE) is left on chain 0,
+  // same as the game does for buildings that don't use the field.
+  const TILE_HOUSE = 2, TILE_FACTORY = 3, TILE_FARM = 4;
 
   root.innerHTML = `
     <div class="pc-wrap">
       <p class="pc-eyebrow">PyCity</p>
       <h1 class="pc-title">Save converter</h1>
       <p class="pc-sub">
-        The police/crime update added a field to every building, so old
-        <code>savegame.dat</code> files get rejected as incompatible.
-        Drop one in below and get back a version the new build will load,
-        with everyone's crime meter starting at zero.
+        Old <code>savegame.dat</code> files get rejected once the save
+        format moves on. Drop yours in below and get back a version the
+        current build will load — works from either the pre-crime format
+        or last release's format, carrying over crime and money where
+        present and assigning each building a resource chain if it doesn't
+        have one yet.
       </p>
 
       <label class="pc-drop" id="pcDrop">
@@ -189,10 +198,11 @@
       <button class="pc-again" id="pcAgain" style="display:none">Convert another file</button>
 
       <div class="pc-foot">
-        Expects the pre-police save layout: 60×40 grid, a building list
-        (position, type, demand, supply), delivery count, and totals. Files
-        that don't match that shape — including ones already on the new
-        format — are left alone and reported below.
+        Reads either the pre-crime save layout or the pre-resource-chain
+        layout (60×40 grid, a building list, delivery count, and totals),
+        and brings it up to the current format. Files already on the
+        current format, or that don't match either older shape, are left
+        alone and reported below.
       </div>
     </div>
   `;
@@ -261,15 +271,16 @@
     need(4, 'magic number');
     const magic = view.getInt32(off, true); off += 4;
 
-    if (magic === NEW_MAGIC) {
+    if (magic === MAGIC_PCI3) {
       log([['ok', 'This file is already in the current format — nothing to do.']]);
       return;
     }
-    if (magic !== OLD_MAGIC) {
+    if (magic !== MAGIC_PCIT && magic !== MAGIC_PCI2) {
       log([['err', `Unrecognized magic number (0x${magic.toString(16)}). This doesn't look like a PyCity savegame.dat.`]]);
       return;
     }
-    rows.push(['ok', 'Recognized old save format (PCIT).']);
+    const hasCrime = (magic === MAGIC_PCI2);
+    rows.push(['ok', `Recognized ${hasCrime ? 'PCI2' : 'PCIT'} save format.`]);
 
     need(GRID_BYTES, 'the map grid');
     const gridBytes = buf.slice(off, off + GRID_BYTES); off += GRID_BYTES;
@@ -282,17 +293,36 @@
       return;
     }
 
-    need(buildingCount * OLD_BUILDING_BYTES, 'the building list');
+    const buildingBytes = hasCrime ? BUILDING_BYTES_PCI2 : BUILDING_BYTES_PCIT;
+    need(buildingCount * buildingBytes, 'the building list');
     const buildings = [];
+    let resourceTypeCount = 0;
     for (let i = 0; i < buildingCount; i++) {
       const r = view.getInt32(off, true); off += 4;
       const c = view.getInt32(off, true); off += 4;
       const type = view.getInt32(off, true); off += 4;
       const demand = view.getFloat32(off, true); off += 4;
       const supply = view.getFloat32(off, true); off += 4;
-      buildings.push({ r, c, type, demand, supply });
+      const crime = hasCrime ? (view.getFloat32(off, true)) : 0.0;
+      if (hasCrime) off += 4;
+      // Same assignment rule as AddBuilding() in Main.c: houses,
+      // factories, and farms get a random chain; everything else
+      // (police) is left on chain 0, which the game never reads for them.
+      const resourceType =
+        (type === TILE_HOUSE || type === TILE_FACTORY || type === TILE_FARM)
+          ? (Math.random() < 0.5 ? 0 : 1)
+          : 0;
+      if (type === TILE_HOUSE || type === TILE_FACTORY || type === TILE_FARM) resourceTypeCount++;
+      buildings.push({ r, c, type, demand, supply, crime, resourceType });
     }
-    rows.push(['ok', `Migrated ${buildingCount} building${buildingCount === 1 ? '' : 's'} — each gets crime = 0.`]);
+    rows.push(['ok',
+      hasCrime
+        ? `Migrated ${buildingCount} building${buildingCount === 1 ? '' : 's'} — crime carried over, ${resourceTypeCount} assigned a random resource chain.`
+        : `Migrated ${buildingCount} building${buildingCount === 1 ? '' : 's'} — each gets crime = 0 and ${resourceTypeCount} get a random resource chain.`
+    ]);
+    if (resourceTypeCount > 0) {
+      rows.push(['info', 'Resource chains are randomized because this old save never recorded which chain each building was on — expect a different (and hopefully more balanced) mix than before.']);
+    }
 
     need(4, 'delivery count');
     const deliveries = view.getInt32(off, true); off += 4;
@@ -311,13 +341,13 @@
       rows.push(['info', `No money field in this save (very old file) — starting at $${money.toFixed(0)}.`]);
     }
 
-    // ---- write new format ----
-    const outBytes = 4 + GRID_BYTES + 4 + buildingCount * NEW_BUILDING_BYTES + 4 + 8 + 8 + 8;
+    // ---- write new format (always PCI3) ----
+    const outBytes = 4 + GRID_BYTES + 4 + buildingCount * BUILDING_BYTES_PCI3 + 4 + 8 + 8 + 8;
     const outBuf = new ArrayBuffer(outBytes);
     const outView = new DataView(outBuf);
     let o = 0;
 
-    outView.setInt32(o, NEW_MAGIC, true); o += 4;
+    outView.setInt32(o, MAGIC_PCI3, true); o += 4;
     new Uint8Array(outBuf, o, GRID_BYTES).set(new Uint8Array(gridBytes)); o += GRID_BYTES;
     outView.setInt32(o, buildingCount, true); o += 4;
     for (const b of buildings) {
@@ -326,7 +356,8 @@
       outView.setInt32(o, b.type, true); o += 4;
       outView.setFloat32(o, b.demand, true); o += 4;
       outView.setFloat32(o, b.supply, true); o += 4;
-      outView.setFloat32(o, 0.0, true); o += 4; // crime, starts at 0
+      outView.setFloat32(o, b.crime, true); o += 4;
+      outView.setInt32(o, b.resourceType, true); o += 4;
     }
     outView.setInt32(o, deliveries, true); o += 4;
     outView.setFloat64(o, totalDemandGenerated, true); o += 8;

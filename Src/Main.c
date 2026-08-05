@@ -8,6 +8,7 @@
 //   5 = Police tool   6 = Bulldoze
 //   Left click        = place/remove on hovered tile
 //   Arrows / WASD     = pan camera
+//   Mouse wheel       = zoom in/out (centered on screen)   -/= = zoom (keyboard alt)
 //   Space             = pause/unpause simulation
 //   F5                = save     F9 = load
 //   Esc               = quit
@@ -20,6 +21,17 @@
 // Economy chain: farms grow food (supply) -> trucks haul it to factories that
 // need it (demand) -> factories turn it into goods (supply) -> trucks haul
 // THOSE to houses that need them (demand). Two truck routes, not one.
+//
+// Resource types (new in v0.0.9): the food and goods chains each come in two
+// distinct flavors instead of one generic "food"/"goods" value - Grain/Bread
+// and Timber/Furniture. Every farm, factory, and house is assigned one of
+// the two chains at placement time (random, shown as a small corner dot -
+// gold for Grain/Bread, teal for Timber/Furniture) and trucks will only
+// move cargo between buildings on the SAME chain: a Grain farm won't feed a
+// Timber factory, and a Furniture factory won't supply a Grain-hungry
+// house. This means a city needs a healthy mix of both chains, not just
+// "more farms" - a house wanting Furniture will starve forever if every
+// factory in town is on the Bread chain.
 //
 // Road congestion: every road tile tracks how much truck traffic has
 // recently passed over it. Heavily-used tiles slow trucks down (and are
@@ -86,34 +98,56 @@
 #define MAX_PATH (MAP_COLS*MAP_ROWS)
 
 #define SAVE_FILE "savegame.dat"
-// Bumped from 0x50434954 ("PCIT") because Building grew a `crime` field
-// this release - an old save read with the new struct layout would
-// silently misalign every field after it, so old saves must be rejected
-// rather than partially loaded. LoadGame() already treats a magic
-// mismatch as "corrupt or incompatible version" and just starts fresh.
-#define SAVE_MAGIC 0x50434932 // "PCI2"
+// Bumped again from 0x50434932 ("PCI2") because Building grew a
+// `resourceType` field this release (see "Resource types" in the header
+// comment above) - same reasoning as the previous bump: an old save read
+// with the new struct layout would silently misalign every field after
+// it, so old saves must be rejected rather than partially loaded.
+// LoadGame() already treats a magic mismatch as "corrupt or incompatible
+// version" and just starts fresh.
+#define SAVE_MAGIC 0x50434933 // "PCI3"
 
 // ---- Money tuning ----
+// v0.0.9 tuning pass note: these were all first-guess placeholders through
+// v0.0.7/8, never actually playtested. The values below are a reasoned
+// first tuning pass (worked out from the math - payback times, time-to-
+// threshold, etc. - not from real play sessions), aimed at fixing the most
+// obviously-broken numbers (see per-constant notes). They're a better
+// starting point than the old placeholders, but still need real playtesting
+// per "Suggested next steps" - don't treat these as final either.
 #define STARTING_MONEY 500.0
 #define COST_ROAD     10.0
 #define COST_HOUSE    50.0
 #define COST_FACTORY 150.0
 #define COST_FARM    100.0
 #define COST_POLICE  200.0
-#define TAX_PER_HOUSE_PER_FRAME 0.02 // flat per house, regardless of how well it's served
+// Old value (0.02) meant a house paid back its own $50 build cost in ~42
+// seconds flat - unintentionally the dominant money strategy was just
+// "spam houses." Lowered so a house pays itself back in a couple of
+// minutes instead, closer to a slow steady trickle than a jackpot.
+#define TAX_PER_HOUSE_PER_FRAME 0.006 // flat per house, regardless of how well it's served
 #define BULLDOZE_REFUND_PERCENT 0.5  // partial refund only, so build-then-bulldoze isn't free money
 
 // ---- Police & crime tuning ----
 #define POLICE_COVERAGE_RADIUS 9       // tiles (Manhattan distance) a station protects
-#define CRIME_GROWTH_PER_FRAME 0.03f   // how fast crime rises on an uncovered house
-#define CRIME_DECAY_PER_FRAME  0.08f   // how fast crime falls on a covered house (faster than it grows)
+// Old growth/theft-chance combo let an uncovered house hit the theft
+// threshold in under a minute and then get robbed roughly every ~7
+// seconds after that (~$1.14/sec average drain) - faster than a single
+// house's tax income, so one uncovered house could bleed the whole city's
+// treasury. Slowed crime growth and thefts so an uncovered house is a
+// real but survivable problem, not an instant money sink.
+#define CRIME_GROWTH_PER_FRAME 0.015f  // how fast crime rises on an uncovered house
+#define CRIME_DECAY_PER_FRAME  0.05f   // how fast crime falls on a covered house (faster than it grows)
 #define THEFT_CRIME_THRESHOLD 70.0f    // crime has to be at least this high for theft to be possible
-#define THEFT_CHANCE_PER_FRAME 400     // 1-in-N per frame per eligible house
-#define THEFT_AMOUNT 8.0               // flat money stolen per theft event
+#define THEFT_CHANCE_PER_FRAME 900     // 1-in-N per frame per eligible house
+#define THEFT_AMOUNT 6.0               // flat money stolen per theft event
 
 // ---- Road congestion tuning ----
 #define CONGESTION_PER_TRUCK_PER_FRAME 3.0f // added to a road tile for every truck currently on it
-#define CONGESTION_DECAY_PER_FRAME 1.0f     // how fast a tile's congestion drains back to 0
+// Decay raised slightly (1.0 -> 1.5) so congestion drains faster once
+// trucks move on - on a map this small, the old value let a single busy
+// intersection stay "hot" long after traffic actually cleared it.
+#define CONGESTION_DECAY_PER_FRAME 1.5f     // how fast a tile's congestion drains back to 0
 #define CONGESTION_MAX 100.0f
 #define CONGESTION_SLOWDOWN_THRESHOLD 30.0f // congestion below this doesn't slow trucks at all
 #define CONGESTION_MAX_SLOWDOWN 0.7f        // at CONGESTION_MAX, trucks move at (1 - this) of normal speed
@@ -132,6 +166,17 @@ static double money = STARTING_MONEY;
 
 // ---- Winter tuning ----
 // (no cap needed - winter uses specific named tiles, see LoadAllAssets)
+
+// The two independent economy chains (see "Resource types" in the header
+// comment). Farms/factories/houses are each assigned one at placement and
+// only ever trade with buildings on the same chain.
+typedef enum { RESOURCE_GRAIN = 0, RESOURCE_TIMBER, TOTAL_RESOURCE_TYPES } ResourceType;
+static const char *RESOURCE_NAMES[TOTAL_RESOURCE_TYPES] = { "Grain/Bread", "Timber/Furniture" };
+// Small corner-dot color used to show which chain a building belongs to.
+static const Color RESOURCE_COLORS[TOTAL_RESOURCE_TYPES] = {
+    (Color){222, 193, 90, 255},  // gold - Grain/Bread
+    (Color){80, 200, 190, 255},  // teal - Timber/Furniture
+};
 
 typedef enum { TILE_EMPTY = 0, TILE_ROAD, TILE_HOUSE, TILE_FACTORY, TILE_FARM, TILE_POLICE, TOTAL_TILE_TYPES } TileType;
 // TILE_FARM and TILE_POLICE are appended in release order (not inserted
@@ -189,6 +234,12 @@ typedef struct {
     float demand;
     float supply;
     float crime; // TILE_HOUSE only: 0-100, see POLICE_COVERAGE_RADIUS / THEFT_* above
+    // Which of the two economy chains this building belongs to. Set once
+    // at AddBuilding() time and never changes. For TILE_FARM: which crop
+    // it grows. For TILE_FACTORY: which food it needs AND which goods it
+    // makes (always the same chain in and out). For TILE_HOUSE: which
+    // goods it wants. Unused (left 0) for TILE_ROAD/TILE_POLICE.
+    ResourceType resourceType;
 } Building;
 
 static Building buildings[MAX_BUILDINGS];
@@ -234,24 +285,58 @@ static int deliveries = 0;
 static double totalDemandGenerated = 0.0;
 static double totalDemandServed = 0.0;
 
-// Camera: top-left tile currently shown on screen.
-static int camR = 0, camC = 0;
+// Camera: top-left corner of the viewport, in WORLD PIXEL space (not tile
+// indices - that only worked back when zoom was always 1:1). camZoom is
+// how many screen pixels one world pixel maps to; 1.0 = original scale.
+static float camPxC = 0, camPxR = 0;
+static float camZoom = 1.0f;
+#define ZOOM_MIN 0.5f
+#define ZOOM_MAX 2.0f
+#define ZOOM_STEP 0.1f
+#define CAM_PAN_TILES_PER_SEC 18.0f // world-space pan speed, independent of zoom
 
 // ---- helpers ----
 
 static Vector2 CellCenterWorld(int r, int c) {
-    // Position in "world" pixel space (before camera offset is applied)
+    // Position in "world" pixel space (before camera offset/zoom is applied)
     Vector2 v = { c*TILE + TILE/2.0f, r*TILE + TILE/2.0f };
     return v;
 }
 
+// Effective on-screen size (px) of one tile at the current zoom. Used
+// everywhere a draw call needs a screen-space size or offset derived from
+// TILE, since raw TILE is only correct at camZoom == 1.
+static float TS(void) { return TILE * camZoom; }
+
 static Vector2 WorldToScreen(Vector2 world) {
-    Vector2 s = { world.x - camC*TILE, world.y - camR*TILE + TOP_BAR };
+    Vector2 s = { (world.x - camPxC) * camZoom, (world.y - camPxR) * camZoom + TOP_BAR };
     return s;
+}
+
+// Inverse of WorldToScreen - used for mouse-to-tile picking.
+static Vector2 ScreenToWorld(Vector2 screen) {
+    Vector2 w = { camPxC + screen.x / camZoom, camPxR + (screen.y - TOP_BAR) / camZoom };
+    return w;
 }
 
 static bool InBounds(int r, int c) {
     return r >= 0 && r < MAP_ROWS && c >= 0 && c < MAP_COLS;
+}
+
+// Computes which grid tiles are actually visible at the current camera
+// position and zoom level (end values are exclusive), so draw loops don't
+// have to walk the whole map every frame regardless of zoom.
+static void GetVisibleTileRange(int *startR, int *endR, int *startC, int *endC) {
+    float viewW = SCREEN_W / camZoom;
+    float viewH = (SCREEN_H - TOP_BAR) / camZoom;
+    *startC = (int)floorf(camPxC / TILE);
+    *endC   = (int)ceilf((camPxC + viewW) / TILE) + 1;
+    *startR = (int)floorf(camPxR / TILE);
+    *endR   = (int)ceilf((camPxR + viewH) / TILE) + 1;
+    if (*startC < 0) *startC = 0;
+    if (*startR < 0) *startR = 0;
+    if (*endC > MAP_COLS) *endC = MAP_COLS;
+    if (*endR > MAP_ROWS) *endR = MAP_ROWS;
 }
 
 static int RoadNeighbors(int r, int c, int outR[4], int outC[4]) {
@@ -334,13 +419,17 @@ static bool BFSPath(int sr, int sc, int er, int ec, Truck *tr) {
 
 // Picks a real trip along one leg of the chain (a source type with supply
 // ready to ship, to a destination type that actually wants it) instead of
-// just grabbing two random buildings. Returns true if a truck was spawned.
-static bool SpawnTruckLeg(TileType fromType, TileType toType, Color truckColor) {
+// just grabbing two random buildings. Both ends must also be on the same
+// resourceType chain - a Grain farm's trucks never visit a Timber
+// factory, even if the factory is starving. Returns true if a truck was
+// spawned.
+static bool SpawnTruckLeg(TileType fromType, TileType toType, ResourceType resType, Color truckColor) {
     int fromCandidates[MAX_BUILDINGS];
     int toCandidates[MAX_BUILDINGS];
     int fromCount = 0, toCount = 0;
 
     for (int i = 0; i < buildingCount; i++) {
+        if (buildings[i].resourceType != resType) continue;
         if (buildings[i].type == fromType && buildings[i].supply >= MIN_SUPPLY_TO_PICKUP) {
             fromCandidates[fromCount++] = i;
         } else if (buildings[i].type == toType && buildings[i].demand >= MIN_DEMAND_TO_SERVE) {
@@ -380,15 +469,41 @@ static bool SpawnTruckLeg(TileType fromType, TileType toType, Color truckColor) 
 static const Color FARM_TRUCK_COLOR    = (Color){110, 190, 90, 255};  // green - hauling food
 static const Color FACTORY_TRUCK_COLOR = (Color){255, 107, 53, 255}; // orange - hauling goods (original color)
 
-// Tries both legs of the chain each tick, in random order, so neither one
-// starves the other of truck slots when both have work to do.
+// Nudges a base leg color toward a resource type's color so trucks
+// visibly read as "which chain" as well as "which leg" - Grain-chain
+// trucks skew toward the base color, Timber-chain trucks are blended
+// noticeably toward teal.
+static Color TruckColorFor(Color base, ResourceType resType) {
+    if (resType == RESOURCE_GRAIN) return base;
+    Color tint = RESOURCE_COLORS[RESOURCE_TIMBER];
+    Color c;
+    c.r = (unsigned char)((base.r + tint.r) / 2);
+    c.g = (unsigned char)((base.g + tint.g) / 2);
+    c.b = (unsigned char)((base.b + tint.b) / 2);
+    c.a = 255;
+    return c;
+}
+
+// Tries every (leg, resourceType) combination each tick, in random order,
+// so no single leg or chain starves the others of truck slots when
+// several have work to do. 2 legs x 2 resource types = 4 combos.
 static void SpawnTruck(void) {
-    if (GetRandomValue(0, 1) == 0) {
-        if (SpawnTruckLeg(TILE_FARM, TILE_FACTORY, FARM_TRUCK_COLOR)) return;
-        SpawnTruckLeg(TILE_FACTORY, TILE_HOUSE, FACTORY_TRUCK_COLOR);
-    } else {
-        if (SpawnTruckLeg(TILE_FACTORY, TILE_HOUSE, FACTORY_TRUCK_COLOR)) return;
-        SpawnTruckLeg(TILE_FARM, TILE_FACTORY, FARM_TRUCK_COLOR);
+    typedef struct { TileType from, to; Color color; } Leg;
+    Leg legs[2] = {
+        { TILE_FARM,    TILE_FACTORY, FARM_TRUCK_COLOR },
+        { TILE_FACTORY, TILE_HOUSE,   FACTORY_TRUCK_COLOR },
+    };
+    int order[4] = {0,1,2,3};
+    // Simple Fisher-Yates shuffle over the 4 combo slots.
+    for (int i = 3; i > 0; i--) {
+        int j = GetRandomValue(0, i);
+        int tmp = order[i]; order[i] = order[j]; order[j] = tmp;
+    }
+    for (int k = 0; k < 4; k++) {
+        int legIdx = order[k] / 2;
+        ResourceType resType = (ResourceType)(order[k] % 2);
+        Leg *leg = &legs[legIdx];
+        if (SpawnTruckLeg(leg->from, leg->to, resType, TruckColorFor(leg->color, resType))) return;
     }
 }
 
@@ -539,8 +654,9 @@ static void DrawTrucks(void) {
         float x = a.x + (b.x - a.x) * tr->t;
         float y = a.y + (b.y - a.y) * tr->t;
         // Skip drawing if off-screen (cheap clip)
-        if (x < -TILE || x > SCREEN_W+TILE || y < TOP_BAR-TILE || y > SCREEN_H+TILE) continue;
-        DrawCircle((int)x, (int)y, TILE*0.16f, tr->color);
+        float ts = TS();
+        if (x < -ts || x > SCREEN_W+ts || y < TOP_BAR-ts || y > SCREEN_H+ts) continue;
+        DrawCircle((int)x, (int)y, ts*0.16f, tr->color);
     }
 }
 
@@ -554,23 +670,24 @@ static void DrawMeterBar(float x, float yOffset, float w, float h, float pct, Co
 // or - for factories - two bars: food need on top, goods ready below.
 static void DrawBuildingMeter(Building *b) {
     Vector2 screenPos = WorldToScreen(CellCenterWorld(b->r, b->c));
-    float x = screenPos.x - TILE*0.4f;
-    float w = TILE*0.8f;
+    float ts = TS();
+    float x = screenPos.x - ts*0.4f;
+    float w = ts*0.8f;
     float h = 4.0f;
-    if (screenPos.x < -TILE || screenPos.x > SCREEN_W+TILE) return;
-    if (screenPos.y < TOP_BAR-TILE || screenPos.y > SCREEN_H+TILE) return;
+    if (screenPos.x < -ts || screenPos.x > SCREEN_W+ts) return;
+    if (screenPos.y < TOP_BAR-ts || screenPos.y > SCREEN_H+ts) return;
 
     if (b->type == TILE_FACTORY) {
         float foodPct = b->demand/100.0f;   // how hungry for food (high = urgent)
         float goodsPct = b->supply/100.0f;  // how many goods ready (high = good)
         Color foodColor  = (foodPct > 0.7f) ? (Color){220,60,50,255} : (foodPct > 0.35f) ? (Color){242,193,78,255} : (Color){90,170,90,255};
         Color goodsColor = (goodsPct > 0.5f) ? (Color){90,170,90,255} : (goodsPct > 0.2f) ? (Color){242,193,78,255} : (Color){120,120,120,255};
-        DrawMeterBar(x, screenPos.y - TILE*0.62f, w, h, foodPct, foodColor);
-        DrawMeterBar(x, screenPos.y - TILE*0.50f, w, h, goodsPct, goodsColor);
+        DrawMeterBar(x, screenPos.y - ts*0.62f, w, h, foodPct, foodColor);
+        DrawMeterBar(x, screenPos.y - ts*0.50f, w, h, goodsPct, goodsColor);
         return;
     }
 
-    float y = screenPos.y - TILE*0.55f;
+    float y = screenPos.y - ts*0.55f;
     float pct = (b->type == TILE_HOUSE) ? (b->demand/100.0f) : (b->supply/100.0f);
     Color barColor;
     if (b->type == TILE_HOUSE) {
@@ -588,8 +705,23 @@ static void DrawBuildingMeter(Building *b) {
     // house doesn't show a second empty bar for no reason.
     if (b->type == TILE_HOUSE && b->crime > 0.5f) {
         float crimePct = b->crime / 100.0f;
-        DrawMeterBar(x, y - TILE*0.12f, w, h, crimePct, (Color){170,70,190,255});
+        DrawMeterBar(x, y - ts*0.12f, w, h, crimePct, (Color){170,70,190,255});
     }
+}
+
+// Small colored dot in a building's top-left corner showing which
+// resource chain it's on (see RESOURCE_COLORS). Only drawn for the three
+// building types that actually participate in a chain.
+static void DrawResourceTypeIndicator(Building *b) {
+    if (b->type != TILE_FARM && b->type != TILE_FACTORY && b->type != TILE_HOUSE) return;
+    Vector2 screenPos = WorldToScreen(CellCenterWorld(b->r, b->c));
+    float ts = TS();
+    if (screenPos.x < -ts || screenPos.x > SCREEN_W+ts) return;
+    if (screenPos.y < TOP_BAR-ts || screenPos.y > SCREEN_H+ts) return;
+    float cx = screenPos.x - ts*0.4f + 3.0f;
+    float cy = screenPos.y - ts*0.4f + 3.0f;
+    DrawCircle((int)cx, (int)cy, 3.5f, RESOURCE_COLORS[b->resourceType]);
+    DrawCircleLines((int)cx, (int)cy, 3.5f, (Color){20,20,20,180});
 }
 
 static void AddBuilding(int r, int c, TileType type) {
@@ -602,6 +734,14 @@ static void AddBuilding(int r, int c, TileType type) {
     // start with nothing to ship - they need a farm delivery first.
     buildings[buildingCount].supply = (type == TILE_FARM) ? 50.0f : 0.0f;
     buildings[buildingCount].crime = 0.0f;
+    // Random chain assignment for the three building types that actually
+    // participate in the economy. Roads/police don't use this field, but
+    // it's still given a defined value (RESOURCE_GRAIN) rather than left
+    // uninitialized, since Building is written straight to the save file.
+    buildings[buildingCount].resourceType =
+        (type == TILE_FARM || type == TILE_FACTORY || type == TILE_HOUSE)
+            ? (ResourceType)GetRandomValue(0, TOTAL_RESOURCE_TYPES - 1)
+            : RESOURCE_GRAIN;
     buildingCount++;
 }
 
@@ -725,7 +865,10 @@ static void UnloadAllAssets(void) {
 
 // Draws one tile: the loaded texture if it exists, otherwise a flat color fallback.
 // r, c are only used to look up which grass variant an empty tile should use.
-static void DrawTile(TileType type, int r, int c, int x, int y) {
+// `size` is the on-screen pixel size of one tile at the current zoom
+// (see TS()) - passed in rather than read globally so this stays a pure
+// function of its arguments.
+static void DrawTile(TileType type, int r, int c, int x, int y, float size) {
     Color fallback = (Color){30,38,35,255}; // grass / empty
     switch (type) {
         case TILE_ROAD:    fallback = (Color){58,67,64,255};   break;
@@ -748,24 +891,25 @@ static void DrawTile(TileType type, int r, int c, int x, int y) {
 
     if (tex.id != 0) {
         Rectangle src = { 0, 0, (float)tex.width, (float)tex.height };
-        Rectangle dst = { (float)x, (float)y, (float)TILE, (float)TILE };
+        Rectangle dst = { (float)x, (float)y, size, size };
         DrawTexturePro(tex, src, dst, (Vector2){0,0}, 0.0f, WHITE);
     } else {
-        DrawRectangle(x, y, TILE-1, TILE-1, fallback);
+        float gap = (size > 2.0f) ? 1.0f : 0.0f; // skip the 1px grid gap once tiles get tiny
+        DrawRectangle(x, y, (int)(size-gap), (int)(size-gap), fallback);
     }
 }
 
 // Tints a road tile red, proportional to its current congestion, so busy
 // choke points are visible at a glance. Drawn as a translucent overlay on
 // top of the tile's normal texture/fallback rather than replacing it.
-static void DrawCongestionOverlay(int r, int c, int x, int y) {
+static void DrawCongestionOverlay(int r, int c, int x, int y, float size) {
     if (grid[r][c] != TILE_ROAD) return;
     float cong = roadCongestion[r][c];
     if (cong <= CONGESTION_SLOWDOWN_THRESHOLD) return;
     float pct = (cong - CONGESTION_SLOWDOWN_THRESHOLD) / (CONGESTION_MAX - CONGESTION_SLOWDOWN_THRESHOLD);
     if (pct > 1.0f) pct = 1.0f;
     unsigned char alpha = (unsigned char)(pct * 140);
-    DrawRectangle(x, y, TILE, TILE, (Color){200, 40, 30, alpha});
+    DrawRectangle(x, y, (int)size, (int)size, (Color){200, 40, 30, alpha});
 }
 
 // Checks the REAL-WORLD system date, not anything in-game. Only ever
@@ -813,21 +957,25 @@ static void SpawnAprilFoolsItem(void) {
 // Draws whatever silly props have landed on empty tiles so far today.
 // Only ever called when IsAprilFoolsToday() is true.
 static void DrawAprilFoolsItems(void) {
-    for (int rr = camR; rr < camR + VIEW_ROWS && rr < MAP_ROWS; rr++) {
-        for (int cc = camC; cc < camC + VIEW_COLS && cc < MAP_COLS; cc++) {
+    int startR, endR, startC, endC;
+    GetVisibleTileRange(&startR, &endR, &startC, &endC);
+    float size = TS();
+    for (int rr = startR; rr < endR; rr++) {
+        for (int cc = startC; cc < endC; cc++) {
             if (grid[rr][cc] != TILE_EMPTY) continue;
             int item = aprilFoolsItem[rr][cc];
             if (item < 0) continue;
 
-            int x = (cc - camC)*TILE;
-            int y = TOP_BAR + (rr - camR)*TILE;
+            Vector2 screenPos = WorldToScreen((Vector2){ (float)(cc*TILE), (float)(rr*TILE) });
+            int x = (int)screenPos.x;
+            int y = (int)screenPos.y;
             Texture2D tex = aprilFoolsTextures[item];
             if (tex.id != 0) {
                 Rectangle src = { 0, 0, (float)tex.width, (float)tex.height };
-                Rectangle dst = { (float)x, (float)y, (float)TILE, (float)TILE };
+                Rectangle dst = { (float)x, (float)y, size, size };
                 DrawTexturePro(tex, src, dst, (Vector2){0,0}, 0.0f, WHITE);
             } else {
-                DrawCircle(x + TILE/2, y + TILE/2, TILE*0.3f, aprilFoolsFallbackColor);
+                DrawCircle(x + (int)(size/2), y + (int)(size/2), size*0.3f, aprilFoolsFallbackColor);
             }
         }
     }
@@ -841,12 +989,13 @@ static void DrawFarmReadyIndicator(Building *b) {
     if (b->supply < MIN_SUPPLY_TO_PICKUP) return;
 
     Vector2 screenPos = WorldToScreen(CellCenterWorld(b->r, b->c));
-    if (screenPos.x < -TILE || screenPos.x > SCREEN_W+TILE) return;
-    if (screenPos.y < TOP_BAR-TILE || screenPos.y > SCREEN_H+TILE) return;
+    float ts = TS();
+    if (screenPos.x < -ts || screenPos.x > SCREEN_W+ts) return;
+    if (screenPos.y < TOP_BAR-ts || screenPos.y > SCREEN_H+ts) return;
 
-    float size = TILE * 0.45f;
-    float x = screenPos.x + TILE*0.5f - size;
-    float y = screenPos.y + TILE*0.5f - size;
+    float size = ts * 0.45f;
+    float x = screenPos.x + ts*0.5f - size;
+    float y = screenPos.y + ts*0.5f - size;
 
     if (farmHayBaleTexture.id != 0) {
         Rectangle src = { 0, 0, (float)farmHayBaleTexture.width, (float)farmHayBaleTexture.height };
@@ -858,10 +1007,42 @@ static void DrawFarmReadyIndicator(Building *b) {
 }
 
 static void ClampCamera(void) {
-    if (camC < 0) camC = 0;
-    if (camR < 0) camR = 0;
-    if (camC > MAP_COLS - VIEW_COLS) camC = MAP_COLS - VIEW_COLS;
-    if (camR > MAP_ROWS - VIEW_ROWS) camR = MAP_ROWS - VIEW_ROWS;
+    float viewW = SCREEN_W / camZoom;
+    float viewH = (SCREEN_H - TOP_BAR) / camZoom;
+    float mapW = MAP_COLS * TILE;
+    float mapH = MAP_ROWS * TILE;
+    // If zoomed out far enough that the whole map fits on screen in one
+    // axis, center it on that axis instead of pinning to a corner.
+    if (viewW >= mapW) camPxC = (mapW - viewW) / 2.0f;
+    else {
+        if (camPxC < 0) camPxC = 0;
+        if (camPxC > mapW - viewW) camPxC = mapW - viewW;
+    }
+    if (viewH >= mapH) camPxR = (mapH - viewH) / 2.0f;
+    else {
+        if (camPxR < 0) camPxR = 0;
+        if (camPxR > mapH - viewH) camPxR = mapH - viewH;
+    }
+}
+
+// Changes zoom by `delta` (clamped to [ZOOM_MIN, ZOOM_MAX]) while keeping
+// the world point currently at screen-center fixed in place, so zooming
+// in/out doesn't yank the view sideways. Caller should follow with
+// ClampCamera() in case the new zoom level changes the valid pan range.
+static void ApplyZoom(float delta) {
+    float oldZoom = camZoom;
+    float newZoom = camZoom + delta;
+    if (newZoom < ZOOM_MIN) newZoom = ZOOM_MIN;
+    if (newZoom > ZOOM_MAX) newZoom = ZOOM_MAX;
+    if (newZoom == oldZoom) return;
+
+    float halfW = SCREEN_W / 2.0f;
+    float halfH = (SCREEN_H - TOP_BAR) / 2.0f;
+    float worldCenterX = camPxC + halfW / oldZoom;
+    float worldCenterY = camPxR + halfH / oldZoom;
+    camZoom = newZoom;
+    camPxC = worldCenterX - halfW / camZoom;
+    camPxR = worldCenterY - halfH / camZoom;
 }
 
 // ---- save / load ----
@@ -941,7 +1122,6 @@ int main(void) {
 
     Tool tool = TOOL_ROAD;
     bool paused = false;
-    const float camSpeed = 12.0f; // tiles-ish per second, scaled below
 
     while (!WindowShouldClose()) {
         // ---- input ----
@@ -955,18 +1135,32 @@ int main(void) {
         if (IsKeyPressed(KEY_F5)) SaveGame();
         if (IsKeyPressed(KEY_F9)) LoadGame();
 
-        // Camera pan - arrow keys or WASD, frame-rate independent-ish
+        // Camera pan - arrow keys or WASD, frame-rate independent-ish.
+        // Pan speed is in constant world pixels/sec regardless of zoom, so
+        // panning covers the same amount of "city" per second whether
+        // zoomed in or out (it'll just look faster on screen when zoomed
+        // out, same as any top-down city builder).
         float dt = GetFrameTime();
-        float move = camSpeed * dt * TILE * 0.2f;
-        if (IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A)) camC -= (int)fmaxf(1.0f, move);
-        if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) camC += (int)fmaxf(1.0f, move);
-        if (IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W)) camR -= (int)fmaxf(1.0f, move);
-        if (IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S)) camR += (int)fmaxf(1.0f, move);
+        float panPx = CAM_PAN_TILES_PER_SEC * TILE * dt;
+        if (IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A)) camPxC -= panPx;
+        if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) camPxC += panPx;
+        if (IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W)) camPxR -= panPx;
+        if (IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S)) camPxR += panPx;
+
+        // Zoom - mouse wheel (one step per notch) or +/- keys as a
+        // keyboard-only alternative. Both go through ApplyZoom() so they
+        // share the same "keep screen-center fixed" behavior.
+        float wheel = GetMouseWheelMove();
+        if (wheel != 0.0f) ApplyZoom(wheel * ZOOM_STEP);
+        if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD))      ApplyZoom(ZOOM_STEP);
+        if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) ApplyZoom(-ZOOM_STEP);
+
         ClampCamera();
 
         Vector2 mouse = GetMousePosition();
-        int c = camC + (int)(mouse.x / TILE);
-        int r = camR + (int)((mouse.y - TOP_BAR) / TILE);
+        Vector2 mouseWorld = ScreenToWorld(mouse);
+        int c = (int)floorf(mouseWorld.x / TILE);
+        int r = (int)floorf(mouseWorld.y / TILE);
         bool hovering = InBounds(r,c) && mouse.y >= TOP_BAR;
 
         if (hovering && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
@@ -1030,13 +1224,19 @@ int main(void) {
         BeginDrawing();
         ClearBackground((Color){21,26,24,255});
 
-        // grid (only the visible slice, offset by camera)
-        for (int rr = camR; rr < camR + VIEW_ROWS && rr < MAP_ROWS; rr++) {
-            for (int cc = camC; cc < camC + VIEW_COLS && cc < MAP_COLS; cc++) {
-                int x = (cc - camC)*TILE;
-                int y = TOP_BAR + (rr - camR)*TILE;
-                DrawTile(grid[rr][cc], rr, cc, x, y);
-                DrawCongestionOverlay(rr, cc, x, y);
+        // grid (only the visible slice, offset by camera and scaled by zoom)
+        {
+            int startR, endR, startC, endC;
+            GetVisibleTileRange(&startR, &endR, &startC, &endC);
+            float tileSize = TS();
+            for (int rr = startR; rr < endR; rr++) {
+                for (int cc = startC; cc < endC; cc++) {
+                    Vector2 screenPos = WorldToScreen((Vector2){ (float)(cc*TILE), (float)(rr*TILE) });
+                    int x = (int)screenPos.x;
+                    int y = (int)screenPos.y;
+                    DrawTile(grid[rr][cc], rr, cc, x, y, tileSize);
+                    DrawCongestionOverlay(rr, cc, x, y, tileSize);
+                }
             }
         }
 
@@ -1046,11 +1246,14 @@ int main(void) {
         for (int i = 0; i < buildingCount; i++) {
             DrawBuildingMeter(&buildings[i]);
             DrawFarmReadyIndicator(&buildings[i]);
+            DrawResourceTypeIndicator(&buildings[i]);
         }
 
         // hover highlight
         if (hovering) {
-            DrawRectangleLines((c-camC)*TILE, TOP_BAR + (r-camR)*TILE, TILE, TILE, (Color){242,193,78,255});
+            Vector2 hoverScreen = WorldToScreen((Vector2){ (float)(c*TILE), (float)(r*TILE) });
+            float ts = TS();
+            DrawRectangleLines((int)hoverScreen.x, (int)hoverScreen.y, (int)ts, (int)ts, (Color){242,193,78,255});
         }
 
         DrawTrucks();
@@ -1079,7 +1282,14 @@ int main(void) {
         } else if (winterActive) {
             DrawText("Winter", SCREEN_W-260, 8, 16, (Color){200,220,255,255});
         }
-        DrawText("F5 save   F9 load   Arrows/WASD pan", SCREEN_W-260, 20, 14, (Color){160,160,150,255});
+        DrawText("F5 save   F9 load   Arrows/WASD pan   Wheel/+- zoom", SCREEN_W-350, 20, 14, (Color){160,160,150,255});
+
+        // Legend for the little corner dots on farms/factories/houses -
+        // otherwise a gold vs teal dot means nothing to a new player.
+        DrawCircle(SCREEN_W-346, 40, 4, RESOURCE_COLORS[RESOURCE_GRAIN]);
+        DrawText(RESOURCE_NAMES[RESOURCE_GRAIN], SCREEN_W-338, 35, 12, (Color){160,160,150,255});
+        DrawCircle(SCREEN_W-346, 54, 4, RESOURCE_COLORS[RESOURCE_TIMBER]);
+        DrawText(RESOURCE_NAMES[RESOURCE_TIMBER], SCREEN_W-338, 49, 12, (Color){160,160,150,255});
 
         EndDrawing();
     }
