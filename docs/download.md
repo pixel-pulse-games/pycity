@@ -47,5 +47,5 @@ The crime & police update changed the save format — if your city won't load af
 - Under 200 MB free space 
 
 --- 
-PyCity — alpha in progress. [Source](https://github.com/m97493578-ops/PyCity)
+PyCity — v1.0.0-rc.1. [Source](https://github.com/pixel-pulse-games/pycity)
 

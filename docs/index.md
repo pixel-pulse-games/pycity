@@ -21,11 +21,11 @@ There's an update where we added crime and police! Coming from v0.0.6 or before?
 
 - Roads & traffic: working
 - Zoning: Working
-- Windows build: alpha
+- Windows build: v1.0.0-rc.1
 
 ---
 
 See How to Compile [Compiler Steps](Compiling.md)
 
-PyCity — alpha in progress. [Source](https://github.com/pixel-pulse-games/pycity)
+PyCity — v1.0.0-rc.1. [Source](https://github.com/pixel-pulse-games/pycity)
 

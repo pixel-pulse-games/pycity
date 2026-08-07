@@ -1,4 +1,4 @@
-// PyCity - alpha
+// PyCity - v1.0.0-rc.1
 // A top-down tile-grid city sim: place roads and buildings, trucks path
 // between buildings automatically along the road network, driven by a
 // simple supply/demand economy.
@@ -724,6 +724,10 @@ static void DrawResourceTypeIndicator(Building *b) {
     DrawCircleLines((int)cx, (int)cy, 3.5f, (Color){20,20,20,180});
 }
 
+// Callers that place a building tile must check buildingCount < MAX_BUILDINGS
+// themselves *before* charging money / painting the grid tile - if this
+// early-returns after the caller already spent money and set grid[r][c],
+// you get a "ghost" tile that looks placed but has no economy behavior.
 static void AddBuilding(int r, int c, TileType type) {
     if (buildingCount >= MAX_BUILDINGS) return;
     buildings[buildingCount].r = r;
@@ -1047,8 +1051,7 @@ static void ApplyZoom(float delta) {
 
 // ---- save / load ----
 // Simple binary dump: magic number, grid, building count, buildings array,
-// economy totals. Good enough for an alpha - not meant to be a stable
-// cross-version save format yet.
+// economy totals. Not meant to be a stable cross-version save format yet.
 static void SaveGame(void) {
     FILE *f = fopen(SAVE_FILE, "wb");
     if (!f) { TraceLog(LOG_WARNING, "PyCity: could not open %s for saving", SAVE_FILE); return; }
@@ -1108,7 +1111,7 @@ static bool LoadGame(void) {
 }
 
 int main(void) {
-    InitWindow(SCREEN_W, SCREEN_H, "PyCity - alpha");
+    InitWindow(SCREEN_W, SCREEN_H, "PyCity - v1.0.0-rc.1");
     SetTargetFPS(60);
 
     // Textures need a GPU context, so this has to happen after InitWindow().
@@ -1172,28 +1175,28 @@ int main(void) {
                     }
                     break;
                 case TOOL_HOUSE:
-                    if (grid[r][c] == TILE_EMPTY && money >= COST_HOUSE) {
+                    if (grid[r][c] == TILE_EMPTY && money >= COST_HOUSE && buildingCount < MAX_BUILDINGS) {
                         grid[r][c] = TILE_HOUSE;
                         AddBuilding(r,c,TILE_HOUSE);
                         money -= COST_HOUSE;
                     }
                     break;
                 case TOOL_FACTORY:
-                    if (grid[r][c] == TILE_EMPTY && money >= COST_FACTORY) {
+                    if (grid[r][c] == TILE_EMPTY && money >= COST_FACTORY && buildingCount < MAX_BUILDINGS) {
                         grid[r][c] = TILE_FACTORY;
                         AddBuilding(r,c,TILE_FACTORY);
                         money -= COST_FACTORY;
                     }
                     break;
                 case TOOL_FARM:
-                    if (grid[r][c] == TILE_EMPTY && money >= COST_FARM) {
+                    if (grid[r][c] == TILE_EMPTY && money >= COST_FARM && buildingCount < MAX_BUILDINGS) {
                         grid[r][c] = TILE_FARM;
                         AddBuilding(r,c,TILE_FARM);
                         money -= COST_FARM;
                     }
                     break;
                 case TOOL_POLICE:
-                    if (grid[r][c] == TILE_EMPTY && money >= COST_POLICE) {
+                    if (grid[r][c] == TILE_EMPTY && money >= COST_POLICE && buildingCount < MAX_BUILDINGS) {
                         grid[r][c] = TILE_POLICE;
                         AddBuilding(r,c,TILE_POLICE);
                         money -= COST_POLICE;

@@ -4,6 +4,7 @@
 *.zip
 *.bak
 *.dat
+*.o
 *.jekyll-cache
 *_site
 *jekyll build
