@@ -52,7 +52,15 @@ jobs:
       - name: Locate compiler bin folders
         id: toolchains
         run: |
-          $gccs = Get-ChildItem -Path "C:\ProgramData\chocolatey\lib" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue
+          # Confirmed from a real run: this mingw choco package installs both
+          # architectures under C:\ProgramData\mingw64\ (mingw64\bin and
+          # mingw32\bin side by side), not under chocolatey's own lib folder.
+          # Search there first; fall back to a full ProgramData scan in case
+          # a future package version changes the layout again.
+          $gccs = Get-ChildItem -Path "C:\ProgramData\mingw64" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue
+          if (-not $gccs) {
+            $gccs = Get-ChildItem -Path "C:\ProgramData" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue
+          }
           $w64 = $null
           $w32 = $null
           foreach ($g in $gccs) {
