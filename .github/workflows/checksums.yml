@@ -38,7 +38,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --pattern "pycity-win64.zip" \
             --pattern "pycity-win32.zip" \
-            --pattern "Patcher.zip" \
+            --pattern "patcher.zip" \
             --dir assets
 
       - name: Generate checksums.txt
