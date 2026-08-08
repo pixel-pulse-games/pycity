@@ -33,9 +33,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          $existing = git tag -l $tag
+          # Check the remote directly - a fresh checkout won't already have
+          # tags from prior runs fetched locally, so `git tag -l` alone
+          # would falsely report "doesn't exist" even when it does.
+          $existing = git ls-remote --tags origin "refs/tags/$tag"
           if ($existing) {
-            Write-Error "Tag $tag already exists. Choose a version that hasn't been used."
+            Write-Error "Tag $tag already exists on origin. Choose a version that hasn't been used."
             exit 1
           }
 
