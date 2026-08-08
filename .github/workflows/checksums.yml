@@ -36,18 +36,13 @@ jobs:
         run: |
           gh release download "${{ steps.tag.outputs.tag }}" \
             --repo "${{ github.repository }}" \
-            --pattern "pycity-win64.zip" \
-            --pattern "pycity-win32.zip" \
-            --pattern "patcher.zip" \
+            --pattern "*.zip" \
             --dir assets
 
       - name: Generate checksums.txt
         run: |
           cd assets
-          h64=$(sha256sum pycity-win64.zip | awk '{print $1}')
-          h32=$(sha256sum pycity-win32.zip | awk '{print $1}')
-          hp=$(sha256sum Patcher.zip | awk '{print $1}')
-          printf "win64=%s\nwin32=%s\npatcher=%s\n" "$h64" "$h32" "$hp" > checksums.txt
+          sha256sum *.zip > checksums.txt
           cat checksums.txt
 
       - name: Upload checksums.txt to the release
