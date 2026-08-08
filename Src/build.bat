@@ -2,6 +2,19 @@
 setlocal enabledelayedexpansion
 cls
 set "CONFIG_FILE=config.ini"
+set "BUILD_FILE=build.txt"
+
+:: CI/non-interactive path: only triggers if --CI is passed explicitly on
+:: the command line. A build.txt sitting in the folder does nothing on its
+:: own - nobody's regular double-click/interactive run changes behavior
+:: just because that file happens to exist.
+if /I "%~1"=="--CI" (
+    if not exist "%BUILD_FILE%" (
+        echo [ERROR] --CI was passed but build.txt was not found.
+        exit /b 1
+    )
+    goto CI_BUILD
+)
 
 :: Check if config.ini exists; if not, jump to setup configuration phase
 if not exist "%CONFIG_FILE%" goto INITIAL_SETUP
@@ -164,10 +177,14 @@ echo [!] Building Patcher.exe (32-bit, so it runs on any Windows install)...
 :: Without it, Windows' installer-detection heuristic auto-elevates this
 :: exe via UAC on its own, since it's an unmanifested 32-bit binary whose
 :: name contains "patch" - see patcher.manifest for the full explanation.
+call :BUILD_PATCHER_SUB
+goto END
+
+:BUILD_PATCHER_SUB
 set "PATH=%W32_BIN_PATH%;%PATH%"
 windres Patcher/patcher.rc -O coff -o Patcher/patcher_res.o
 gcc Patcher/patcher.c Patcher/patcher_res.o Patcher/miniz.c -o Patcher.exe -lwininet -ladvapi32
-goto END
+exit /b
 
 :BUILD_BOOTSTRAP
 echo.
@@ -189,9 +206,13 @@ echo [!] Building Bootstrap.exe (32-bit - installs new Patcher.exe builds)...
 :: installer-detection UAC auto-elevation heuristic keys off filenames
 :: containing "patch", "setup", "install", or "update" - "Bootstrap"
 :: doesn't match any of those, so it launches normally without prompting.
+call :BUILD_BOOTSTRAP_SUB
+goto END
+
+:BUILD_BOOTSTRAP_SUB
 set "PATH=%W32_BIN_PATH%;%PATH%"
 gcc Bootstrap/Bootstrap.c Patcher/miniz.c -I Patcher -o Bootstrap.exe -lwininet -ladvapi32
-goto END
+exit /b
 
 :RESET_CONFIG
 del "%CONFIG_FILE%"
@@ -210,3 +231,72 @@ echo ========================================================
 pause
 cls
 goto MENU
+
+:: --------------------------------------------------------
+:: CI / non-interactive build path
+:: --------------------------------------------------------
+:: Only reached when build.bat is run as: build.bat --CI
+:: (see the check at the top of the script). Reads TARGET plus the same
+:: W64_BIN_PATH/W32_BIN_PATH keys config.ini uses, runs exactly one
+:: build, and exits - no wizard, no menu, no `pause` calls, so this is
+:: safe to run unattended in CI.
+::
+:: Usage:  build.bat --CI
+:: Expected build.txt format:
+::   TARGET=win64
+::   W64_BIN_PATH=C:\w64devkit\bin
+::   W32_BIN_PATH=C:\w32devkit\bin
+:: TARGET is one of: win64, win32, both, patcher, bootstrap, all
+:: (only the W64_BIN_PATH/W32_BIN_PATH line(s) the chosen target
+:: actually needs have to be present. "all" needs both paths.)
+:CI_BUILD
+echo ========================================================
+echo PyCity CI Build (build.txt detected)
+echo ========================================================
+
+for /f "usebackq tokens=1,2 delims==" %%A in ("%BUILD_FILE%") do (
+    set "key=%%A"
+    set "val=%%B"
+    if "!key!"=="TARGET" set "CI_TARGET=!val!"
+    if "!key!"=="W64_BIN_PATH" set "W64_BIN_PATH=!val!"
+    if "!key!"=="W32_BIN_PATH" set "W32_BIN_PATH=!val!"
+)
+
+echo [+] Target: %CI_TARGET%
+
+if "%CI_TARGET%"=="win64" (
+    call :BUILD_64_SUB
+    goto CI_DONE
+)
+if "%CI_TARGET%"=="win32" (
+    call :BUILD_32_SUB
+    goto CI_DONE
+)
+if "%CI_TARGET%"=="both" (
+    call :BUILD_64_SUB
+    call :BUILD_32_SUB
+    goto CI_DONE
+)
+if "%CI_TARGET%"=="all" (
+    call :BUILD_64_SUB
+    call :BUILD_32_SUB
+    call :BUILD_PATCHER_SUB
+    call :BUILD_BOOTSTRAP_SUB
+    goto CI_DONE
+)
+if "%CI_TARGET%"=="patcher" (
+    call :BUILD_PATCHER_SUB
+    goto CI_DONE
+)
+if "%CI_TARGET%"=="bootstrap" (
+    call :BUILD_BOOTSTRAP_SUB
+    goto CI_DONE
+)
+
+echo [ERROR] Unknown or missing TARGET "%CI_TARGET%" in build.txt
+echo [ERROR] Expected one of: win64, win32, both, patcher, bootstrap, all
+exit /b 1
+
+:CI_DONE
+echo [+] CI build complete.
+exit /b 0
