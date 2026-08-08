@@ -1,0 +1,60 @@
+name: Generate checksums.txt
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to generate checksums for (defaults to latest)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  checksums:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine target tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            latest=$(gh release view --json tagName -q .tagName)
+            echo "tag=$latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "pycity-win64.zip" \
+            --pattern "pycity-win32.zip" \
+            --pattern "Patcher.zip" \
+            --dir assets
+
+      - name: Generate checksums.txt
+        run: |
+          cd assets
+          h64=$(sha256sum pycity-win64.zip | awk '{print $1}')
+          h32=$(sha256sum pycity-win32.zip | awk '{print $1}')
+          hp=$(sha256sum Patcher.zip | awk '{print $1}')
+          printf "win64=%s\nwin32=%s\npatcher=%s\n" "$h64" "$h32" "$hp" > checksums.txt
+          cat checksums.txt
+
+      - name: Upload checksums.txt to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.tag.outputs.tag }}" \
+            assets/checksums.txt \
+            --repo "${{ github.repository }}" \
+            --clobber
