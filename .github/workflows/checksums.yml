@@ -14,42 +14,54 @@ permissions:
 
 jobs:
   checksums:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
     steps:
       - name: Determine target tag
         id: tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          elif [ -n "${{ github.event.release.tag_name }}" ]; then
-            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
-          else
-            latest=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
-            echo "tag=$latest" >> "$GITHUB_OUTPUT"
-          fi
+          if ("${{ github.event.inputs.tag }}") {
+            echo "tag=${{ github.event.inputs.tag }}" >> $env:GITHUB_OUTPUT
+          } elseif ("${{ github.event.release.tag_name }}") {
+            echo "tag=${{ github.event.release.tag_name }}" >> $env:GITHUB_OUTPUT
+          } else {
+            $latest = gh release view --repo "${{ github.repository }}" --json tagName -q .tagName
+            echo "tag=$latest" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Download release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "${{ steps.tag.outputs.tag }}" \
-            --repo "${{ github.repository }}" \
-            --pattern "*.zip" \
+          gh release download "${{ steps.tag.outputs.tag }}" `
+            --repo "${{ github.repository }}" `
+            --pattern "*.zip" `
             --dir assets
 
       - name: Generate checksums.txt
         run: |
           cd assets
-          sha256sum *.zip > checksums.txt
-          cat checksums.txt
+          $files = Get-ChildItem -Filter *.zip
+          $lines = @()
+          
+          foreach ($file in $files) {
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLower()
+            $name = $file.BaseName.ToLower()
+            $lines += "$name=$hash"
+          }
+          
+          $lines | Out-File -Encoding ascii checksums.txt
+          Get-Content checksums.txt
 
       - name: Upload checksums.txt to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ steps.tag.outputs.tag }}" \
-            assets/checksums.txt \
-            --repo "${{ github.repository }}" \
+          gh release upload "${{ steps.tag.outputs.tag }}" `
+            assets/checksums.txt `
+            --repo "${{ github.repository }}" `
             --clobber
