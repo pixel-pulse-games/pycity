@@ -46,15 +46,20 @@ jobs:
         run: |
           cd assets
           $files = Get-ChildItem -Filter *.zip
-          $lines = @()
+          $pairs = @()
           
           foreach ($file in $files) {
             $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLower()
-            $name = $file.BaseName.ToLower()
-            $lines += "$name=$hash"
+            if ($file.BaseName -eq "pycity-win64") { $name = "win64" }
+            elseif ($file.BaseName -eq "pycity-win32") { $name = "win32" }
+            else { $name = $file.BaseName.ToLower() }
+            
+            $pairs += "$name=$hash"
           }
           
-          $lines | Out-File -Encoding ascii checksums.txt
+          # Join all pairs with a single space on one line
+          $output = $pairs -join " "
+          $output | Out-File -Encoding ascii checksums.txt
           Get-Content checksums.txt
 
       - name: Upload checksums.txt to the release
