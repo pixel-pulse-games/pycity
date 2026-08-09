@@ -1,0 +1,7 @@
+# ==============================================================================
+# PYCITY REPOSITORY CODEOWNERS
+# ==============================================================================
+# Order matters: the LAST matching rule takes absolute precedence.
+
+# Global Catch-All: Locks down every single file, folder, and subdirectory in pycity
+*       @m97493578-ops

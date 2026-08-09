@@ -49,21 +49,32 @@ jobs:
       - name: Install 64-bit mingw-w64 toolchain
         run: choco install mingw -y --no-progress
 
+      - name: Preserve the 64-bit toolchain before reinstalling for 32-bit
+        run: |
+          # Confirmed from a real run: choco's "mingw" package is tracked as
+          # a single install. Force-reinstalling it for the 32-bit build
+          # REPLACES the 64-bit files rather than installing alongside them
+          # (its own log even says "Found ...mingw64\bin in PATH... Removing").
+          # Copy the 64-bit toolchain out of the way first so it survives.
+          if (Test-Path "C:\ProgramData\mingw64\mingw64") {
+            Copy-Item -Recurse -Force "C:\ProgramData\mingw64\mingw64" "C:\ProgramData\mingw64-x64-keep"
+          } else {
+            Write-Error "Expected 64-bit toolchain folder not found before the 32-bit reinstall step."
+            exit 1
+          }
+
       - name: Install 32-bit mingw-w64 toolchain
         run: choco install mingw -y --no-progress --forcex86 --force
 
       - name: Locate compiler bin folders
         id: toolchains
         run: |
-          # Confirmed from a real run: this mingw choco package installs both
-          # architectures under C:\ProgramData\mingw64\ (mingw64\bin and
-          # mingw32\bin side by side), not under chocolatey's own lib folder.
-          # Search there first; fall back to a full ProgramData scan in case
-          # a future package version changes the layout again.
-          $gccs = Get-ChildItem -Path "C:\ProgramData\mingw64" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue
-          if (-not $gccs) {
-            $gccs = Get-ChildItem -Path "C:\ProgramData" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue
-          }
+          # The 64-bit toolchain now lives at the preserved copy made in the
+          # previous step; the 32-bit one is wherever the mingw package just
+          # installed it. Search all of ProgramData rather than hardcode
+          # exact subfolder names, and classify each gcc.exe found by asking
+          # it directly via -dumpmachine instead of guessing from the path.
+          $gccs = Get-ChildItem -Path "C:\ProgramData" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue
           $w64 = $null
           $w32 = $null
           foreach ($g in $gccs) {
