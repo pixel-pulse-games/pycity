@@ -8,3 +8,4 @@
 *.jekyll-cache
 *_site
 *jekyll build
+deploy.bat
