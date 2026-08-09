@@ -1,4 +1,8 @@
-// PyCity - v1.0.0-rc.1
+// PyCity - v1.0.1-nightly
+// Built on top of v1.0.0-rc.1 - this is a nightly (not the RC itself):
+// modding support (see Mods/ModLoader.h, MODDING.md) hasn't earned
+// RC-level trust yet, so it lives here rather than in v1.0.0-rc.1's
+// build. Every other line of Main.c is otherwise identical to the RC.
 // A top-down tile-grid city sim: place roads and buildings, trucks path
 // between buildings automatically along the road network, driven by a
 // simple supply/demand economy.
@@ -75,6 +79,7 @@
 // if its folder is empty or missing - same pattern as always in this file.
 
 #include "raylib.h"
+#include "Mods/ModLoader.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -115,50 +120,96 @@
 // obviously-broken numbers (see per-constant notes). They're a better
 // starting point than the old placeholders, but still need real playtesting
 // per "Suggested next steps" - don't treat these as final either.
-#define STARTING_MONEY 500.0
-#define COST_ROAD     10.0
-#define COST_HOUSE    50.0
-#define COST_FACTORY 150.0
-#define COST_FARM    100.0
-#define COST_POLICE  200.0
+// Renamed DEFAULT_* this release (were bare names like COST_ROAD): these
+// are now only the *shipped defaults*, seeding the runtime-mutable
+// g_econ struct just below. Nothing gameplay-side reads these macros
+// directly anymore - see "Modding support" further down for why.
+#define DEFAULT_STARTING_MONEY 500.0
+#define DEFAULT_COST_ROAD     10.0
+#define DEFAULT_COST_HOUSE    50.0
+#define DEFAULT_COST_FACTORY 150.0
+#define DEFAULT_COST_FARM    100.0
+#define DEFAULT_COST_POLICE  200.0
 // Old value (0.02) meant a house paid back its own $50 build cost in ~42
 // seconds flat - unintentionally the dominant money strategy was just
 // "spam houses." Lowered so a house pays itself back in a couple of
 // minutes instead, closer to a slow steady trickle than a jackpot.
-#define TAX_PER_HOUSE_PER_FRAME 0.006 // flat per house, regardless of how well it's served
-#define BULLDOZE_REFUND_PERCENT 0.5  // partial refund only, so build-then-bulldoze isn't free money
+#define DEFAULT_TAX_PER_HOUSE_PER_FRAME 0.006 // flat per house, regardless of how well it's served
+#define DEFAULT_BULLDOZE_REFUND_PERCENT 0.5  // partial refund only, so build-then-bulldoze isn't free money
 
 // ---- Police & crime tuning ----
-#define POLICE_COVERAGE_RADIUS 9       // tiles (Manhattan distance) a station protects
+#define DEFAULT_POLICE_COVERAGE_RADIUS 9       // tiles (Manhattan distance) a station protects
 // Old growth/theft-chance combo let an uncovered house hit the theft
 // threshold in under a minute and then get robbed roughly every ~7
 // seconds after that (~$1.14/sec average drain) - faster than a single
 // house's tax income, so one uncovered house could bleed the whole city's
 // treasury. Slowed crime growth and thefts so an uncovered house is a
 // real but survivable problem, not an instant money sink.
-#define CRIME_GROWTH_PER_FRAME 0.015f  // how fast crime rises on an uncovered house
-#define CRIME_DECAY_PER_FRAME  0.05f   // how fast crime falls on a covered house (faster than it grows)
-#define THEFT_CRIME_THRESHOLD 70.0f    // crime has to be at least this high for theft to be possible
-#define THEFT_CHANCE_PER_FRAME 900     // 1-in-N per frame per eligible house
-#define THEFT_AMOUNT 6.0               // flat money stolen per theft event
+#define DEFAULT_CRIME_GROWTH_PER_FRAME 0.015f  // how fast crime rises on an uncovered house
+#define DEFAULT_CRIME_DECAY_PER_FRAME  0.05f   // how fast crime falls on a covered house (faster than it grows)
+#define DEFAULT_THEFT_CRIME_THRESHOLD 70.0f    // crime has to be at least this high for theft to be possible
+#define DEFAULT_THEFT_CHANCE_PER_FRAME 900     // 1-in-N per frame per eligible house
+#define DEFAULT_THEFT_AMOUNT 6.0               // flat money stolen per theft event
 
 // ---- Road congestion tuning ----
-#define CONGESTION_PER_TRUCK_PER_FRAME 3.0f // added to a road tile for every truck currently on it
+#define DEFAULT_CONGESTION_PER_TRUCK_PER_FRAME 3.0f // added to a road tile for every truck currently on it
 // Decay raised slightly (1.0 -> 1.5) so congestion drains faster once
 // trucks move on - on a map this small, the old value let a single busy
 // intersection stay "hot" long after traffic actually cleared it.
-#define CONGESTION_DECAY_PER_FRAME 1.5f     // how fast a tile's congestion drains back to 0
-#define CONGESTION_MAX 100.0f
-#define CONGESTION_SLOWDOWN_THRESHOLD 30.0f // congestion below this doesn't slow trucks at all
-#define CONGESTION_MAX_SLOWDOWN 0.7f        // at CONGESTION_MAX, trucks move at (1 - this) of normal speed
+#define DEFAULT_CONGESTION_DECAY_PER_FRAME 1.5f     // how fast a tile's congestion drains back to 0
+#define DEFAULT_CONGESTION_MAX 100.0f
+#define DEFAULT_CONGESTION_SLOWDOWN_THRESHOLD 30.0f // congestion below this doesn't slow trucks at all
+#define DEFAULT_CONGESTION_MAX_SLOWDOWN 0.7f        // at CONGESTION_MAX, trucks move at (1 - this) of normal speed
 
-static double money = STARTING_MONEY;
-#define DEMAND_GROWTH_PER_FRAME 0.04f      // how fast a house's demand fills up
-#define SUPPLY_GROWTH_PER_FRAME 0.05f      // how fast a farm's crops grow back in
-#define FOOD_DEMAND_GROWTH_PER_FRAME 0.05f // how fast a factory's need for food fills up
-#define DELIVERY_AMOUNT 35.0f              // how much one truckload moves
-#define MIN_DEMAND_TO_SERVE 15.0f          // house/factory needs at least this much demand to get a truck
-#define MIN_SUPPLY_TO_PICKUP 15.0f         // farm/factory needs at least this much supply to send a truck
+#define DEFAULT_DEMAND_GROWTH_PER_FRAME 0.04f      // how fast a house's demand fills up
+#define DEFAULT_SUPPLY_GROWTH_PER_FRAME 0.05f      // how fast a farm's crops grow back in
+#define DEFAULT_FOOD_DEMAND_GROWTH_PER_FRAME 0.05f // how fast a factory's need for food fills up
+#define DEFAULT_DELIVERY_AMOUNT 35.0f              // how much one truckload moves
+#define DEFAULT_MIN_DEMAND_TO_SERVE 15.0f          // house/factory needs at least this much demand to get a truck
+#define DEFAULT_MIN_SUPPLY_TO_PICKUP 15.0f         // farm/factory needs at least this much supply to send a truck
+
+// ---- Modding support (new this release) ----
+// g_econ starts as a straight copy of the DEFAULT_* constants above.
+// main() then calls ModLoader_LoadMods(&g_econ, "mods") *before* the
+// window/game loop starts, which may override individual fields based
+// on mods/*.lua scripts (see Mods/ModLoader.h and MODDING.md). Every
+// formula below that used to reference a DEFAULT_*-style macro directly
+// now reads g_econ.<field> instead, so a mod's numbers actually take
+// effect - the macros above only exist to document/seed "what a fresh
+// install ships with."
+static EconomyTunables g_econ = {
+    .startingMoney = DEFAULT_STARTING_MONEY,
+    .costRoad = DEFAULT_COST_ROAD,
+    .costHouse = DEFAULT_COST_HOUSE,
+    .costFactory = DEFAULT_COST_FACTORY,
+    .costFarm = DEFAULT_COST_FARM,
+    .costPolice = DEFAULT_COST_POLICE,
+    .taxPerHousePerFrame = DEFAULT_TAX_PER_HOUSE_PER_FRAME,
+    .bulldozeRefundPercent = DEFAULT_BULLDOZE_REFUND_PERCENT,
+    .policeCoverageRadius = DEFAULT_POLICE_COVERAGE_RADIUS,
+    .crimeGrowthPerFrame = DEFAULT_CRIME_GROWTH_PER_FRAME,
+    .crimeDecayPerFrame = DEFAULT_CRIME_DECAY_PER_FRAME,
+    .theftCrimeThreshold = DEFAULT_THEFT_CRIME_THRESHOLD,
+    .theftChancePerFrame = DEFAULT_THEFT_CHANCE_PER_FRAME,
+    .theftAmount = DEFAULT_THEFT_AMOUNT,
+    .congestionPerTruckPerFrame = DEFAULT_CONGESTION_PER_TRUCK_PER_FRAME,
+    .congestionDecayPerFrame = DEFAULT_CONGESTION_DECAY_PER_FRAME,
+    .congestionMax = DEFAULT_CONGESTION_MAX,
+    .congestionSlowdownThreshold = DEFAULT_CONGESTION_SLOWDOWN_THRESHOLD,
+    .congestionMaxSlowdown = DEFAULT_CONGESTION_MAX_SLOWDOWN,
+    .demandGrowthPerFrame = DEFAULT_DEMAND_GROWTH_PER_FRAME,
+    .supplyGrowthPerFrame = DEFAULT_SUPPLY_GROWTH_PER_FRAME,
+    .foodDemandGrowthPerFrame = DEFAULT_FOOD_DEMAND_GROWTH_PER_FRAME,
+    .deliveryAmount = DEFAULT_DELIVERY_AMOUNT,
+    .minDemandToServe = DEFAULT_MIN_DEMAND_TO_SERVE,
+    .minSupplyToPickup = DEFAULT_MIN_SUPPLY_TO_PICKUP,
+};
+
+// money used to be statically initialized to DEFAULT_STARTING_MONEY; now it's set
+// from g_econ.startingMoney in main(), *after* ModLoader_LoadMods() runs,
+// so a mod overriding starting_money actually takes effect. 0 here is a
+// placeholder overwritten before the game loop ever reads it.
+static double money = 0.0;
 
 // ---- April Fools tuning ----
 #define MAX_APRIL_FOOLS_TEXTURES 32      // cap on how many props we'll load from assets/april_fools/
@@ -187,14 +238,14 @@ typedef enum { TILE_EMPTY = 0, TILE_ROAD, TILE_HOUSE, TILE_FACTORY, TILE_FARM, T
 typedef enum { TOOL_ROAD = 0, TOOL_HOUSE, TOOL_FACTORY, TOOL_FARM, TOOL_POLICE, TOOL_BULLDOZE } Tool;
 
 // Cost to place one tile of a given type. Also used to compute the
-// bulldoze refund (see BULLDOZE_REFUND_PERCENT).
+// bulldoze refund (see g_econ.bulldozeRefundPercent).
 static double GetBuildCost(TileType type) {
     switch (type) {
-        case TILE_ROAD:    return COST_ROAD;
-        case TILE_HOUSE:   return COST_HOUSE;
-        case TILE_FACTORY: return COST_FACTORY;
-        case TILE_FARM:    return COST_FARM;
-        case TILE_POLICE:  return COST_POLICE;
+        case TILE_ROAD:    return g_econ.costRoad;
+        case TILE_HOUSE:   return g_econ.costHouse;
+        case TILE_FACTORY: return g_econ.costFactory;
+        case TILE_FARM:    return g_econ.costFarm;
+        case TILE_POLICE:  return g_econ.costPolice;
         default:           return 0.0;
     }
 }
@@ -233,7 +284,7 @@ typedef struct {
     TileType type;
     float demand;
     float supply;
-    float crime; // TILE_HOUSE only: 0-100, see POLICE_COVERAGE_RADIUS / THEFT_* above
+    float crime; // TILE_HOUSE only: 0-100, see g_econ.policeCoverageRadius / THEFT_* above
     // Which of the two economy chains this building belongs to. Set once
     // at AddBuilding() time and never changes. For TILE_FARM: which crop
     // it grows. For TILE_FACTORY: which food it needs AND which goods it
@@ -430,9 +481,9 @@ static bool SpawnTruckLeg(TileType fromType, TileType toType, ResourceType resTy
 
     for (int i = 0; i < buildingCount; i++) {
         if (buildings[i].resourceType != resType) continue;
-        if (buildings[i].type == fromType && buildings[i].supply >= MIN_SUPPLY_TO_PICKUP) {
+        if (buildings[i].type == fromType && buildings[i].supply >= g_econ.minSupplyToPickup) {
             fromCandidates[fromCount++] = i;
-        } else if (buildings[i].type == toType && buildings[i].demand >= MIN_DEMAND_TO_SERVE) {
+        } else if (buildings[i].type == toType && buildings[i].demand >= g_econ.minDemandToServe) {
             toCandidates[toCount++] = i;
         }
     }
@@ -459,7 +510,7 @@ static bool SpawnTruckLeg(TileType fromType, TileType toType, ResourceType resTy
         trucks[i] = t;
 
         // Cargo leaves the source now; it arrives at the destination later.
-        buildings[from].supply -= DELIVERY_AMOUNT;
+        buildings[from].supply -= g_econ.deliveryAmount;
         if (buildings[from].supply < 0) buildings[from].supply = 0;
         return true;
     }
@@ -507,7 +558,7 @@ static void SpawnTruck(void) {
     }
 }
 
-// True if any police station is within POLICE_COVERAGE_RADIUS (Manhattan
+// True if any police station is within g_econ.policeCoverageRadius (Manhattan
 // distance) of the given tile. Straightforward linear scan - buildingCount
 // is capped at MAX_BUILDINGS (128), so this is cheap even called once per
 // house per frame.
@@ -515,7 +566,7 @@ static bool IsCoveredByPolice(int r, int c) {
     for (int i = 0; i < buildingCount; i++) {
         if (buildings[i].type != TILE_POLICE) continue;
         int dist = abs(buildings[i].r - r) + abs(buildings[i].c - c);
-        if (dist <= POLICE_COVERAGE_RADIUS) return true;
+        if (dist <= g_econ.policeCoverageRadius) return true;
     }
     return false;
 }
@@ -524,12 +575,12 @@ static void UpdateBuildings(void) {
     for (int i = 0; i < buildingCount; i++) {
         if (buildings[i].type == TILE_HOUSE) {
             if (buildings[i].demand < 100.0f) {
-                buildings[i].demand += DEMAND_GROWTH_PER_FRAME;
-                totalDemandGenerated += DEMAND_GROWTH_PER_FRAME;
+                buildings[i].demand += g_econ.demandGrowthPerFrame;
+                totalDemandGenerated += g_econ.demandGrowthPerFrame;
                 if (buildings[i].demand > 100.0f) buildings[i].demand = 100.0f;
             }
             // Flat tax, regardless of how well this house is being served.
-            money += TAX_PER_HOUSE_PER_FRAME;
+            money += g_econ.taxPerHousePerFrame;
 
             // Crime rises when a house is outside every police station's
             // coverage radius, and decays (faster than it rises) when
@@ -538,20 +589,20 @@ static void UpdateBuildings(void) {
             // a concrete reason to actually build police stations rather
             // than just a cosmetic number.
             if (IsCoveredByPolice(buildings[i].r, buildings[i].c)) {
-                buildings[i].crime -= CRIME_DECAY_PER_FRAME;
+                buildings[i].crime -= g_econ.crimeDecayPerFrame;
                 if (buildings[i].crime < 0.0f) buildings[i].crime = 0.0f;
             } else {
-                buildings[i].crime += CRIME_GROWTH_PER_FRAME;
+                buildings[i].crime += g_econ.crimeGrowthPerFrame;
                 if (buildings[i].crime > 100.0f) buildings[i].crime = 100.0f;
             }
-            if (buildings[i].crime >= THEFT_CRIME_THRESHOLD &&
-                GetRandomValue(0, THEFT_CHANCE_PER_FRAME) == 0) {
-                money -= THEFT_AMOUNT;
+            if (buildings[i].crime >= g_econ.theftCrimeThreshold &&
+                GetRandomValue(0, g_econ.theftChancePerFrame) == 0) {
+                money -= g_econ.theftAmount;
                 if (money < 0) money = 0;
             }
         } else if (buildings[i].type == TILE_FARM) {
             if (buildings[i].supply < 100.0f) {
-                buildings[i].supply += SUPPLY_GROWTH_PER_FRAME;
+                buildings[i].supply += g_econ.supplyGrowthPerFrame;
                 if (buildings[i].supply > 100.0f) buildings[i].supply = 100.0f;
             }
         } else if (buildings[i].type == TILE_FACTORY) {
@@ -559,7 +610,7 @@ static void UpdateBuildings(void) {
             // supply does not - that only rises when a farm delivery
             // arrives (see DeliverToBuilding).
             if (buildings[i].demand < 100.0f) {
-                buildings[i].demand += FOOD_DEMAND_GROWTH_PER_FRAME;
+                buildings[i].demand += g_econ.foodDemandGrowthPerFrame;
                 if (buildings[i].demand > 100.0f) buildings[i].demand = 100.0f;
             }
         }
@@ -575,12 +626,12 @@ static void DeliverToBuilding(int buildingIdx) {
     Building *b = &buildings[buildingIdx];
 
     if (b->type == TILE_HOUSE) {
-        float served = (b->demand < DELIVERY_AMOUNT) ? b->demand : DELIVERY_AMOUNT;
+        float served = (b->demand < g_econ.deliveryAmount) ? b->demand : g_econ.deliveryAmount;
         b->demand -= served;
         if (b->demand < 0) b->demand = 0;
         totalDemandServed += served;
     } else if (b->type == TILE_FACTORY) {
-        float served = (b->demand < DELIVERY_AMOUNT) ? b->demand : DELIVERY_AMOUNT;
+        float served = (b->demand < g_econ.deliveryAmount) ? b->demand : g_econ.deliveryAmount;
         b->demand -= served;
         if (b->demand < 0) b->demand = 0;
         b->supply += served;
@@ -588,17 +639,17 @@ static void DeliverToBuilding(int buildingIdx) {
     }
 }
 
-// Converts a road tile's congestion (0..CONGESTION_MAX) into a speed
-// multiplier: 1.0 below CONGESTION_SLOWDOWN_THRESHOLD, tapering linearly
-// down to (1 - CONGESTION_MAX_SLOWDOWN) at full congestion.
+// Converts a road tile's congestion (0..g_econ.congestionMax) into a speed
+// multiplier: 1.0 below g_econ.congestionSlowdownThreshold, tapering linearly
+// down to (1 - g_econ.congestionMaxSlowdown) at full congestion.
 static float CongestionSpeedFactor(int r, int c) {
     float cong = roadCongestion[r][c];
-    if (cong <= CONGESTION_SLOWDOWN_THRESHOLD) return 1.0f;
-    float span = CONGESTION_MAX - CONGESTION_SLOWDOWN_THRESHOLD;
-    float over = cong - CONGESTION_SLOWDOWN_THRESHOLD;
+    if (cong <= g_econ.congestionSlowdownThreshold) return 1.0f;
+    float span = g_econ.congestionMax - g_econ.congestionSlowdownThreshold;
+    float over = cong - g_econ.congestionSlowdownThreshold;
     float pct = (span > 0.0f) ? (over / span) : 1.0f;
     if (pct > 1.0f) pct = 1.0f;
-    return 1.0f - pct * CONGESTION_MAX_SLOWDOWN;
+    return 1.0f - pct * g_econ.congestionMaxSlowdown;
 }
 
 static void UpdateTrucks(void) {
@@ -608,7 +659,7 @@ static void UpdateTrucks(void) {
     for (int r = 0; r < MAP_ROWS; r++) {
         for (int c = 0; c < MAP_COLS; c++) {
             if (roadCongestion[r][c] > 0.0f) {
-                roadCongestion[r][c] -= CONGESTION_DECAY_PER_FRAME;
+                roadCongestion[r][c] -= g_econ.congestionDecayPerFrame;
                 if (roadCongestion[r][c] < 0.0f) roadCongestion[r][c] = 0.0f;
             }
         }
@@ -625,8 +676,8 @@ static void UpdateTrucks(void) {
         }
 
         int curR = tr->pathR[tr->idx], curC = tr->pathC[tr->idx];
-        roadCongestion[curR][curC] += CONGESTION_PER_TRUCK_PER_FRAME;
-        if (roadCongestion[curR][curC] > CONGESTION_MAX) roadCongestion[curR][curC] = CONGESTION_MAX;
+        roadCongestion[curR][curC] += g_econ.congestionPerTruckPerFrame;
+        if (roadCongestion[curR][curC] > g_econ.congestionMax) roadCongestion[curR][curC] = g_econ.congestionMax;
 
         tr->t += tr->speed * CongestionSpeedFactor(curR, curC);
         if (tr->t >= 1.0f) {
@@ -909,8 +960,8 @@ static void DrawTile(TileType type, int r, int c, int x, int y, float size) {
 static void DrawCongestionOverlay(int r, int c, int x, int y, float size) {
     if (grid[r][c] != TILE_ROAD) return;
     float cong = roadCongestion[r][c];
-    if (cong <= CONGESTION_SLOWDOWN_THRESHOLD) return;
-    float pct = (cong - CONGESTION_SLOWDOWN_THRESHOLD) / (CONGESTION_MAX - CONGESTION_SLOWDOWN_THRESHOLD);
+    if (cong <= g_econ.congestionSlowdownThreshold) return;
+    float pct = (cong - g_econ.congestionSlowdownThreshold) / (g_econ.congestionMax - g_econ.congestionSlowdownThreshold);
     if (pct > 1.0f) pct = 1.0f;
     unsigned char alpha = (unsigned char)(pct * 140);
     DrawRectangle(x, y, (int)size, (int)size, (Color){200, 40, 30, alpha});
@@ -990,7 +1041,7 @@ static void DrawAprilFoolsItems(void) {
 // the meter bar above already shows the exact number.
 static void DrawFarmReadyIndicator(Building *b) {
     if (b->type != TILE_FARM) return;
-    if (b->supply < MIN_SUPPLY_TO_PICKUP) return;
+    if (b->supply < g_econ.minSupplyToPickup) return;
 
     Vector2 screenPos = WorldToScreen(CellCenterWorld(b->r, b->c));
     float ts = TS();
@@ -1094,7 +1145,7 @@ static bool LoadGame(void) {
     // shorter save file can't leave `money` partially overwritten with
     // garbage bytes.
     double loadedMoney;
-    money = (fread(&loadedMoney, sizeof(double), 1, f) == 1) ? loadedMoney : STARTING_MONEY;
+    money = (fread(&loadedMoney, sizeof(double), 1, f) == 1) ? loadedMoney : g_econ.startingMoney;
 
     fclose(f);
 
@@ -1111,7 +1162,20 @@ static bool LoadGame(void) {
 }
 
 int main(void) {
-    InitWindow(SCREEN_W, SCREEN_H, "PyCity - v1.0.0-rc.1");
+    // Mods only touch g_econ (balance numbers), no GPU/window state, so
+    // this deliberately runs before InitWindow() - a mod with a syntax
+    // error or a bad path prints to stdout/stderr immediately, before
+    // the player is staring at a blank game window wondering if it's
+    // frozen. "mods" is relative to the working directory the exe was
+    // launched from (same as SAVE_FILE), i.e. sits next to the .exe in
+    // a normal install.
+    int modsLoaded = ModLoader_LoadMods(&g_econ, "mods");
+    if (modsLoaded > 0) printf("[mods] %d mod(s) applied\n", modsLoaded);
+    // Now that mods (if any) have had their say, seed `money` from
+    // whatever g_econ.startingMoney ended up being.
+    money = g_econ.startingMoney;
+
+    InitWindow(SCREEN_W, SCREEN_H, "PyCity - v1.0.1-nightly");
     SetTargetFPS(60);
 
     // Textures need a GPU context, so this has to happen after InitWindow().
@@ -1169,42 +1233,42 @@ int main(void) {
         if (hovering && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             switch (tool) {
                 case TOOL_ROAD:
-                    if (grid[r][c] == TILE_EMPTY && money >= COST_ROAD) {
+                    if (grid[r][c] == TILE_EMPTY && money >= g_econ.costRoad) {
                         grid[r][c] = TILE_ROAD;
-                        money -= COST_ROAD;
+                        money -= g_econ.costRoad;
                     }
                     break;
                 case TOOL_HOUSE:
-                    if (grid[r][c] == TILE_EMPTY && money >= COST_HOUSE && buildingCount < MAX_BUILDINGS) {
+                    if (grid[r][c] == TILE_EMPTY && money >= g_econ.costHouse && buildingCount < MAX_BUILDINGS) {
                         grid[r][c] = TILE_HOUSE;
                         AddBuilding(r,c,TILE_HOUSE);
-                        money -= COST_HOUSE;
+                        money -= g_econ.costHouse;
                     }
                     break;
                 case TOOL_FACTORY:
-                    if (grid[r][c] == TILE_EMPTY && money >= COST_FACTORY && buildingCount < MAX_BUILDINGS) {
+                    if (grid[r][c] == TILE_EMPTY && money >= g_econ.costFactory && buildingCount < MAX_BUILDINGS) {
                         grid[r][c] = TILE_FACTORY;
                         AddBuilding(r,c,TILE_FACTORY);
-                        money -= COST_FACTORY;
+                        money -= g_econ.costFactory;
                     }
                     break;
                 case TOOL_FARM:
-                    if (grid[r][c] == TILE_EMPTY && money >= COST_FARM && buildingCount < MAX_BUILDINGS) {
+                    if (grid[r][c] == TILE_EMPTY && money >= g_econ.costFarm && buildingCount < MAX_BUILDINGS) {
                         grid[r][c] = TILE_FARM;
                         AddBuilding(r,c,TILE_FARM);
-                        money -= COST_FARM;
+                        money -= g_econ.costFarm;
                     }
                     break;
                 case TOOL_POLICE:
-                    if (grid[r][c] == TILE_EMPTY && money >= COST_POLICE && buildingCount < MAX_BUILDINGS) {
+                    if (grid[r][c] == TILE_EMPTY && money >= g_econ.costPolice && buildingCount < MAX_BUILDINGS) {
                         grid[r][c] = TILE_POLICE;
                         AddBuilding(r,c,TILE_POLICE);
-                        money -= COST_POLICE;
+                        money -= g_econ.costPolice;
                     }
                     break;
                 case TOOL_BULLDOZE:
                     if (grid[r][c] != TILE_EMPTY) {
-                        money += GetBuildCost(grid[r][c]) * BULLDOZE_REFUND_PERCENT;
+                        money += GetBuildCost(grid[r][c]) * g_econ.bulldozeRefundPercent;
                         if (grid[r][c] == TILE_HOUSE || grid[r][c] == TILE_FACTORY || grid[r][c] == TILE_FARM || grid[r][c] == TILE_POLICE) RemoveBuildingAt(r,c);
                         grid[r][c] = TILE_EMPTY;
                     }
@@ -1274,7 +1338,7 @@ int main(void) {
         DrawText(TextFormat("Tool: %s", toolNames[tool]), 10, 8, 18, (Color){255,107,53,255});
 
         double demandMetPct = (totalDemandGenerated > 0.001) ? (totalDemandServed/totalDemandGenerated*100.0) : 100.0;
-        Color moneyColor = (money < COST_ROAD) ? (Color){220,60,50,255} : (Color){237,232,222,255};
+        Color moneyColor = (money < g_econ.costRoad) ? (Color){220,60,50,255} : (Color){237,232,222,255};
         DrawText(TextFormat("Money: $%.0f", money), 10, 52, 18, moneyColor);
         DrawText(TextFormat("Deliveries: %d   Buildings: %d   Demand met: %.0f%%   %s",
                   deliveries, buildingCount, demandMetPct, paused ? "[PAUSED]" : ""),
