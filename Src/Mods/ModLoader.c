@@ -86,6 +86,45 @@ static void SetFieldValue(EconomyTunables *econ, const FieldDesc *f, double v) {
     }
 }
 
+// ---- Mod -> player messages ------------------------------------------
+// A mod calls pycity.message("text") from either its startup script or
+// from on_broke; the text lands here in a small FIFO queue rather than
+// being drawn directly (ModLoader.c has no idea how to draw anything -
+// that's Main.c's job, via ModLoader_PopMessage() each frame). This is
+// the only way a mod gets visible in-game feedback - print() only goes
+// to stdout, which nobody sees during normal play (there's no console
+// window unless the exe was launched from a terminal).
+#define MAX_QUEUED_MESSAGES 16
+
+static char g_messageQueue[MAX_QUEUED_MESSAGES][MOD_MESSAGE_MAX_LEN];
+static int g_msgHead = 0, g_msgTail = 0, g_msgCount = 0;
+
+static void EnqueueMessage(const char *msg) {
+    if (g_msgCount >= MAX_QUEUED_MESSAGES) {
+        // Queue's full - drop the oldest one to make room. A mod
+        // spamming messages faster than the player (or Main.c) can
+        // drain them shouldn't be able to permanently wedge the queue;
+        // losing the oldest, least-relevant-by-now message is the
+        // least-bad option here.
+        g_msgHead = (g_msgHead + 1) % MAX_QUEUED_MESSAGES;
+        g_msgCount--;
+    }
+    snprintf(g_messageQueue[g_msgTail], MOD_MESSAGE_MAX_LEN, "%s", msg);
+    g_msgTail = (g_msgTail + 1) % MAX_QUEUED_MESSAGES;
+    g_msgCount++;
+}
+
+// The actual C function bound to pycity.message() in Lua - see
+// PushEconomyTable(), where it's registered. luaL_checkstring enforces
+// that the argument really is a string (or something Lua can coerce to
+// one, e.g. a number); anything else raises a Lua error inside the
+// mod's own pcall rather than us having to validate it by hand.
+static int Lua_PyCityMessage(lua_State *L) {
+    const char *msg = luaL_checkstring(L, 1);
+    EnqueueMessage(msg);
+    return 0; // no return values
+}
+
 // Builds the `pycity` global table, pre-populated with econ's current
 // values, so a script can read a default (e.g. `pycity.cost_house * 2`)
 // as well as overwrite it outright.
@@ -95,6 +134,11 @@ static void PushEconomyTable(lua_State *L, const EconomyTunables *econ) {
         lua_pushnumber(L, GetFieldValue(econ, &FIELDS[i]));
         lua_setfield(L, -2, FIELDS[i].luaField);
     }
+    // pycity.message(text) - available from both the mod's startup
+    // script and (for hook mods) later, since the same Lua state and
+    // its `pycity` table stay alive across on_broke calls.
+    lua_pushcfunction(L, Lua_PyCityMessage);
+    lua_setfield(L, -2, "message");
     lua_setglobal(L, "pycity");
 }
 
@@ -166,6 +210,15 @@ static void FailSecurityViolation(const char *path, const char *reason) {
     exit(1);
 }
 
+// Mods that define pycity.on_broke keep their Lua state alive for the
+// whole game session (see RunOneMod) instead of being closed right
+// after their startup script runs, so ModLoader_TriggerOnBroke() can
+// call back into them later, mid-game. Capped for the same reason
+// MAX_MOD_FILES is - a sane ceiling, not an expected real count.
+#define MAX_HOOK_MODS 64
+static lua_State *g_hookMods[MAX_HOOK_MODS];
+static int g_hookModCount = 0;
+
 static int RunOneMod(const char *path, EconomyTunables *econ) {
     // Hard stop before Lua is even involved: reject compiled bytecode
     // outright based on its raw file header.
@@ -216,7 +269,29 @@ static int RunOneMod(const char *path, EconomyTunables *econ) {
         printf("[mods] loaded %s\n", path);
     }
 
-    lua_close(L);
+    // If the mod defined pycity.on_broke (a function), it wants to be
+    // called later, mid-game, when a placement would otherwise fail for
+    // lack of money - see ModLoader_TriggerOnBroke(). Keep its Lua
+    // state alive for that; every other mod is closed here same as
+    // before, since a one-shot startup script has nothing left to do.
+    int isHookMod = 0;
+    if (ok) {
+        lua_getglobal(L, "pycity");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "on_broke");
+            if (lua_isfunction(L, -1) && g_hookModCount < MAX_HOOK_MODS) {
+                isHookMod = 1;
+            }
+            lua_pop(L, 1); // on_broke value
+        }
+        lua_pop(L, 1); // pycity table
+    }
+
+    if (isHookMod) {
+        g_hookMods[g_hookModCount++] = L;
+    } else {
+        lua_close(L);
+    }
     return ok;
 }
 
@@ -287,4 +362,75 @@ int ModLoader_LoadMods(EconomyTunables *econ, const char *modsDir) {
     }
 
     return loaded;
+}
+
+void ModLoader_TriggerOnBroke(double cost, double money, double *moneyGranted, int *autoPlace) {
+    double totalGranted = 0.0;
+    int place = 0;
+
+    for (int i = 0; i < g_hookModCount; i++) {
+        lua_State *L = g_hookMods[i];
+
+        lua_getglobal(L, "pycity");
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+
+        // Reset outputs before calling, so a mod that doesn't touch
+        // them on *this* call doesn't accidentally reuse whatever it
+        // set on a previous call.
+        lua_pushnumber(L, 0.0);
+        lua_setfield(L, -2, "grant_money");
+        lua_pushboolean(L, 0);
+        lua_setfield(L, -2, "auto_place");
+        // setfield pops the value each time but leaves the table on
+        // top, so stack here is still just [pycity].
+
+        lua_getfield(L, -1, "on_broke");
+        if (!lua_isfunction(L, -1)) { lua_pop(L, 2); continue; } // shouldn't happen - checked at load time
+
+        lua_pushnumber(L, cost);
+        lua_pushnumber(L, money);
+        if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+            const char *err = lua_tostring(L, -1);
+            fprintf(stderr, "[mods] on_broke error: %s\n", err ? err : "(unknown error)");
+            lua_pop(L, 1); // error message (replaced func+args on a failed pcall)
+            lua_pop(L, 1); // pycity table, still sitting below where the error came back
+            continue;
+        }
+        // Success, 0 results requested: pcall consumed the function and
+        // its 2 args and pushed nothing back, so the stack is exactly
+        // what it was right before the getfield("on_broke") call - just
+        // [pycity] again. No need to re-fetch it.
+
+        lua_getfield(L, -1, "grant_money");
+        if (lua_isnumber(L, -1)) totalGranted += lua_tonumber(L, -1);
+        lua_pop(L, 1);
+
+        lua_getfield(L, -1, "auto_place");
+        if (lua_isboolean(L, -1) && lua_toboolean(L, -1)) place = 1;
+        lua_pop(L, 1);
+
+        lua_pop(L, 1); // pycity table
+    }
+
+    // Same spirit as FIELDS' clamps: a mod can be generous, not absurd.
+    if (totalGranted < 0.0) totalGranted = 0.0;
+    if (totalGranted > 10000.0) totalGranted = 10000.0;
+
+    *moneyGranted = totalGranted;
+    *autoPlace = place;
+}
+
+void ModLoader_Shutdown(void) {
+    for (int i = 0; i < g_hookModCount; i++) {
+        lua_close(g_hookMods[i]);
+    }
+    g_hookModCount = 0;
+}
+
+int ModLoader_PopMessage(char *outBuf, size_t outBufSize) {
+    if (g_msgCount == 0) return 0;
+    snprintf(outBuf, outBufSize, "%s", g_messageQueue[g_msgHead]);
+    g_msgHead = (g_msgHead + 1) % MAX_QUEUED_MESSAGES;
+    g_msgCount--;
+    return 1;
 }

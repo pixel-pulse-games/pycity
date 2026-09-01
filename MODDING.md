@@ -1,18 +1,28 @@
 # Modding PyCity
 
-New in v1.0.1-nightly: PyCity can load `.lua` scripts from a `mods/` folder
-next to the game's `.exe` to retune the game's economy numbers - no
-recompiling required.
+New in v1.0.1: PyCity can load `.lua` scripts from a `mods/` folder next
+to the game's `.exe` to retune the game's economy numbers - no
+recompiling required. Mods can also react mid-game via `pycity.on_broke`,
+and show the player toast messages via `pycity.message()` - see below.
 
-> **Status: nightly only, not in v1.0.0** 
+> **Status.** Verified via a standalone test harness that loads real
+> mod scripts through a real Lua VM, bypassing raylib/the game entirely
+> - confirmed economy overrides, `on_broke`, `pycity.message()`,
+> sandboxing, and bytecode rejection all behave as documented here. Not
+> yet built with the real Windows toolchain or played in an actual game
+> session - see HANDOFF.md.
 
 ## Scope
 
-Mods can override **balance numbers only**: build costs, tax, crime and
-theft, road congestion, and demand/supply growth rates. Mods **cannot**:
+Mods can do two things: override **balance numbers** (build costs, tax,
+crime and theft, road congestion, demand/supply growth) at startup, and
+optionally react **mid-game**, at the exact moment a placement would
+otherwise fail for lack of money - see "Mid-game hook: on_broke" below.
+Mods still **cannot**:
 
 - change map size, tile art, or building sprites
-- add new building/tool types
+- add new building/tool types (they can place *existing* types via
+  `auto_place` in the hook below - not invent new ones)
 - touch the resource-chain system (which farms/factories/houses get
   Grain vs. Timber)
 - read or write files, launch other programs, or do anything outside the
@@ -82,21 +92,84 @@ uses it as a divisor). If you set something out of range, it's silently
 clamped rather than crashing the game - check the field's behavior
 in-game if a value doesn't seem to be taking effect the way you expected.
 
-## Example
+## Mid-game hook: on_broke
 
-See `mods/example_easy_mode.lua.disabled` (rename to drop `.disabled`
-to try it) - halves every building cost, triples starting money, and
-slows crime growth.
+Everything above only runs once, at startup. This is the one exception:
+a mod can define a function called `pycity.on_broke`, and the game will
+call it later, *during play*, at the exact moment you try to place
+something and don't have enough money for it - not on a timer, not
+every frame, only right then.
 
 ```lua
--- Building costs, halved.
-pycity.cost_house = pycity.cost_house / 2
-pycity.cost_factory = pycity.cost_factory / 2
+function pycity.on_broke(cost, money)
+    -- cost:  what the thing you're trying to place actually costs
+    -- money: what you currently have (always less than cost, or this
+    --        wouldn't be getting called)
+end
+```
 
--- Start with more cash in the bank.
-pycity.starting_money = pycity.starting_money * 3
+Inside that function, you can set either or both of:
 
-print("[my_mod] loaded")
+| Field | Type | Effect |
+|---|---|---|
+| `pycity.grant_money` | number | Added to your money right now |
+| `pycity.auto_place` | boolean | If true, places the building anyway - even if `grant_money` didn't (fully) cover it |
+
+Doing neither is completely normal - most calls to `on_broke` should
+probably do nothing, so that when it *does* help, it feels like it
+means something. Use `math.random(...)` for a "sometimes" feel (see the
+example below). If more than one hook mod is installed, every one gets
+called: `grant_money` amounts are added together, and `auto_place`
+happens if *any* mod set it.
+
+There's no equivalent hook for "when you have plenty of money" or "every
+frame" - this one trigger point (an unaffordable placement attempt) is
+the only mid-game moment mods currently get a say in.
+
+## Talking to the player: pycity.message()
+
+`print("...")` still works, but it only reaches stdout - during normal
+play there's no console window for the player to see it in (only
+someone who launched the exe from a terminal would). To actually show
+the player something, call:
+
+```lua
+pycity.message("Verity: covered a $40 shortfall")
+```
+
+This shows up as a toast in the bottom-left corner of the screen for a
+few seconds, then fades out. It works from a startup script (e.g. to
+announce "Easy mode active" when the game begins) and from inside
+`on_broke` (e.g. to explain why money or a building just appeared).
+
+A few practical limits: messages are capped at 199 characters (longer
+ones get cut off, not rejected outright), and at most 5 toasts are ever
+on screen at once - if you queue up more than that in a short span, the
+oldest ones get replaced rather than piling up indefinitely.
+
+## Example
+
+Two examples exist, but as of v1.0.1 they're a **separate download**
+(the "PyCity Mods" package), not bundled inside the game install - a
+fresh `PyCity.exe` ships with no `mods/` folder at all and plays
+completely unmodded until you add one yourself.
+
+- `example_easy_mode.lua` - a startup-only mod. Halves every
+  building cost, triples starting money, and slows crime growth. Same
+  numbers, all the time, whether you need them or not.
+- `Verity.lua` - uses `on_broke` instead. Changes nothing on
+  its own; only steps in when you're about to fail a placement, and
+  even then only about 1 time in 3, covering the exact shortfall and
+  placing the building for you:
+
+```lua
+function pycity.on_broke(cost, money)
+    if math.random(1, 3) ~= 1 then return end -- most of the time, do nothing
+    local shortfall = cost - money
+    pycity.grant_money = shortfall
+    pycity.auto_place = true
+    pycity.message(string.format("Verity: covered a $%.0f shortfall", shortfall))
+end
 ```
 
 ## Sandboxing
@@ -131,9 +204,16 @@ source - check where it came from before re-adding it.
 
 ## Known limitations (this first pass)
 
-- No priority/merge system beyond "later filename wins" - if two mods
-  disagree, only the constraint above decides which one sticks.
+- No priority/merge system beyond "later filename wins" for the
+  startup fields - if two mods disagree there, only the constraint
+  above decides which one sticks. `on_broke` is different: every hook
+  mod gets called, not just one (see above).
 - No way for a mod to know what other mods are loaded, or to depend on
   one another.
-- No hot-reload - mods are read once at startup.
+- No hot-reload - mods are read once at startup (though `on_broke`
+  itself can still run any number of times later, using that same
+  startup read).
 - No in-game UI to see which mods are active; check the console output.
+- `on_broke` is the *only* mid-game hook - there's no equivalent for
+  other moments (e.g. "money is running low" without an actual failed
+  placement, or "a theft just happened").

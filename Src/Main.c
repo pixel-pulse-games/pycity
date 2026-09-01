@@ -1,8 +1,10 @@
-// PyCity - v1.0.1-nightly
-// Built on top of v1.0.0-rc.1 - this is a nightly (not the RC itself):
-// modding support (see Mods/ModLoader.h, MODDING.md) hasn't earned
-// RC-level trust yet, so it lives here rather than in v1.0.0-rc.1's
-// build. Every other line of Main.c is otherwise identical to the RC.
+// PyCity - v1.0.1
+// Built on top of v1.0.0-rc.1. Adds Lua modding: startup-only economy
+// overrides (Mods/ModLoader.h's EconomyTunables + g_econ below), the
+// mid-game pycity.on_broke hook (see TryPlaceBuilding() below), and
+// pycity.message() for in-game toast feedback. See MODDING.md for the
+// full mod-author-facing picture. Every other line of Main.c is
+// otherwise identical to v1.0.0-rc.1.
 // A top-down tile-grid city sim: place roads and buildings, trucks path
 // between buildings automatically along the road network, driven by a
 // simple supply/demand economy.
@@ -810,6 +812,51 @@ static void RemoveBuildingAt(int r, int c) {
     }
 }
 
+// Attempts to place `type` at (r,c), used by every TOOL_* placement case
+// below. If the player can afford it (and, for anything but a road,
+// there's still room under MAX_BUILDINGS), places it normally. If they
+// can't afford it, gives any mod defining pycity.on_broke a chance to
+// step in - see Mods/ModLoader.h and MODDING.md. A mod may grant enough
+// money to cover the shortfall, place the building outright for free,
+// both, or neither (declining is the normal case - "sometimes helps",
+// not "always helps"). Does nothing at all (silently, same as before
+// this hook existed) if the tile isn't empty, the mod declines, and the
+// player can't afford it on their own.
+static void TryPlaceBuilding(TileType type, int r, int c) {
+    if (grid[r][c] != TILE_EMPTY) return;
+
+    double cost = GetBuildCost(type);
+    bool canAfford = (money >= cost);
+
+    // Only the tile-cap actually blocks roads too, but roads don't
+    // consume a Building slot (they're not tracked in buildings[]), so
+    // the MAX_BUILDINGS check only matters for the other four types -
+    // matches the original per-tool checks this replaces.
+    bool hasRoomForBuilding = (type == TILE_ROAD) || (buildingCount < MAX_BUILDINGS);
+    if (!hasRoomForBuilding) return;
+
+    if (!canAfford) {
+        double granted = 0.0;
+        int autoPlace = 0;
+        ModLoader_TriggerOnBroke(cost, money, &granted, &autoPlace);
+        if (granted > 0.0) money += granted;
+        canAfford = (money >= cost);
+        // Even without enough money granted to actually cover it, a mod
+        // can still say "place it anyway" via auto_place - e.g. a mod
+        // that just wants to hand out a free building sometimes, not
+        // necessarily tied to covering the exact shortfall.
+        if (!canAfford && !autoPlace) return;
+    }
+
+    grid[r][c] = type;
+    if (type != TILE_ROAD) AddBuilding(r, c, type);
+    // Only actually charge if they could afford it outright or a mod's
+    // grant covered it - an auto_place bailout without enough of a
+    // grant to cover the cost is a free building, by design (that's
+    // what "place it for you" means when the player couldn't pay).
+    if (money >= cost) money -= cost;
+}
+
 // Loads a texture for a tile type and warns (without crashing) if it's missing.
 static void LoadTileAsset(TileType type, const char *path) {
     Texture2D tex = LoadTexture(path);
@@ -1061,6 +1108,74 @@ static void DrawFarmReadyIndicator(Building *b) {
     }
 }
 
+// ---- mod messages (toasts) ----
+// pycity.message(text) (see Mods/ModLoader.h) queues text over in
+// ModLoader.c; this is where it actually becomes something the player
+// sees. Drained once per frame in the main loop (DrainModMessages),
+// aged/expired each frame (UpdateToasts), drawn stacked in a corner
+// (DrawToasts). This is currently the ONLY in-game feedback a mod gets
+// - there's no console window during normal play, so without this a
+// mod calling pycity.message() (or even just print()) would be
+// invisible to the player entirely.
+#define MAX_TOASTS 5
+#define TOAST_DURATION_SEC 3.0f
+#define TOAST_FADE_SEC 0.5f // last this-many seconds of a toast's life fade out, rather than popping off abruptly
+
+typedef struct {
+    char text[MOD_MESSAGE_MAX_LEN];
+    float ttl; // seconds remaining before this toast disappears
+} Toast;
+
+static Toast toasts[MAX_TOASTS];
+static int toastCount = 0;
+
+static void AddToast(const char *text) {
+    if (toastCount >= MAX_TOASTS) {
+        // Oldest toast (index 0, since new ones are appended) makes way
+        // for the new one - same "don't let a burst wedge things up"
+        // reasoning as ModLoader's own message queue.
+        for (int i = 1; i < toastCount; i++) toasts[i-1] = toasts[i];
+        toastCount--;
+    }
+    snprintf(toasts[toastCount].text, sizeof(toasts[toastCount].text), "%s", text);
+    toasts[toastCount].ttl = TOAST_DURATION_SEC;
+    toastCount++;
+}
+
+// Pulls every message that's queued up since last frame (there can be
+// more than one) out of ModLoader.c and turns each into a toast.
+static void DrainModMessages(void) {
+    char buf[MOD_MESSAGE_MAX_LEN];
+    while (ModLoader_PopMessage(buf, sizeof(buf))) {
+        AddToast(buf);
+    }
+}
+
+static void UpdateToasts(float dt) {
+    int w = 0;
+    for (int i = 0; i < toastCount; i++) {
+        toasts[i].ttl -= dt;
+        if (toasts[i].ttl > 0.0f) toasts[w++] = toasts[i]; // compact out expired ones
+    }
+    toastCount = w;
+}
+
+// Stacked bottom-left, newest on top, each fading out over its last
+// TOAST_FADE_SEC before disappearing rather than popping off abruptly.
+static void DrawToasts(void) {
+    int y = SCREEN_H - 44;
+    for (int i = toastCount - 1; i >= 0; i--) {
+        float alpha = (toasts[i].ttl < TOAST_FADE_SEC) ? (toasts[i].ttl / TOAST_FADE_SEC) : 1.0f;
+        if (alpha < 0.0f) alpha = 0.0f;
+        unsigned char a = (unsigned char)(alpha * 255);
+        int textWidth = MeasureText(toasts[i].text, 16);
+        int boxWidth = textWidth + 20;
+        DrawRectangle(10, y - 4, boxWidth, 26, (Color){20,18,15,(unsigned char)(a*0.75f)});
+        DrawText(toasts[i].text, 20, y, 16, (Color){255,214,120,a});
+        y -= 32;
+    }
+}
+
 static void ClampCamera(void) {
     float viewW = SCREEN_W / camZoom;
     float viewH = (SCREEN_H - TOP_BAR) / camZoom;
@@ -1175,7 +1290,7 @@ int main(void) {
     // whatever g_econ.startingMoney ended up being.
     money = g_econ.startingMoney;
 
-    InitWindow(SCREEN_W, SCREEN_H, "PyCity - v1.0.1-nightly");
+    InitWindow(SCREEN_W, SCREEN_H, "PyCity - v1.0.1");
     SetTargetFPS(60);
 
     // Textures need a GPU context, so this has to happen after InitWindow().
@@ -1208,6 +1323,14 @@ int main(void) {
         // zoomed in or out (it'll just look faster on screen when zoomed
         // out, same as any top-down city builder).
         float dt = GetFrameTime();
+
+        // Any pycity.message() calls since last frame (from a startup
+        // script, or from on_broke firing during TryPlaceBuilding()
+        // above) become toasts here, then age normally alongside
+        // everything else this frame.
+        DrainModMessages();
+        UpdateToasts(dt);
+
         float panPx = CAM_PAN_TILES_PER_SEC * TILE * dt;
         if (IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A)) camPxC -= panPx;
         if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) camPxC += panPx;
@@ -1233,38 +1356,19 @@ int main(void) {
         if (hovering && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             switch (tool) {
                 case TOOL_ROAD:
-                    if (grid[r][c] == TILE_EMPTY && money >= g_econ.costRoad) {
-                        grid[r][c] = TILE_ROAD;
-                        money -= g_econ.costRoad;
-                    }
+                    TryPlaceBuilding(TILE_ROAD, r, c);
                     break;
                 case TOOL_HOUSE:
-                    if (grid[r][c] == TILE_EMPTY && money >= g_econ.costHouse && buildingCount < MAX_BUILDINGS) {
-                        grid[r][c] = TILE_HOUSE;
-                        AddBuilding(r,c,TILE_HOUSE);
-                        money -= g_econ.costHouse;
-                    }
+                    TryPlaceBuilding(TILE_HOUSE, r, c);
                     break;
                 case TOOL_FACTORY:
-                    if (grid[r][c] == TILE_EMPTY && money >= g_econ.costFactory && buildingCount < MAX_BUILDINGS) {
-                        grid[r][c] = TILE_FACTORY;
-                        AddBuilding(r,c,TILE_FACTORY);
-                        money -= g_econ.costFactory;
-                    }
+                    TryPlaceBuilding(TILE_FACTORY, r, c);
                     break;
                 case TOOL_FARM:
-                    if (grid[r][c] == TILE_EMPTY && money >= g_econ.costFarm && buildingCount < MAX_BUILDINGS) {
-                        grid[r][c] = TILE_FARM;
-                        AddBuilding(r,c,TILE_FARM);
-                        money -= g_econ.costFarm;
-                    }
+                    TryPlaceBuilding(TILE_FARM, r, c);
                     break;
                 case TOOL_POLICE:
-                    if (grid[r][c] == TILE_EMPTY && money >= g_econ.costPolice && buildingCount < MAX_BUILDINGS) {
-                        grid[r][c] = TILE_POLICE;
-                        AddBuilding(r,c,TILE_POLICE);
-                        money -= g_econ.costPolice;
-                    }
+                    TryPlaceBuilding(TILE_POLICE, r, c);
                     break;
                 case TOOL_BULLDOZE:
                     if (grid[r][c] != TILE_EMPTY) {
@@ -1358,10 +1462,13 @@ int main(void) {
         DrawCircle(SCREEN_W-346, 54, 4, RESOURCE_COLORS[RESOURCE_TIMBER]);
         DrawText(RESOURCE_NAMES[RESOURCE_TIMBER], SCREEN_W-338, 49, 12, (Color){160,160,150,255});
 
+        DrawToasts(); // mod messages - drawn last so they sit on top of everything else
+
         EndDrawing();
     }
 
     UnloadAllAssets();
+    ModLoader_Shutdown(); // closes any mod Lua states kept alive for pycity.on_broke
     CloseWindow();
     return 0;
 }

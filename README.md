@@ -1,29 +1,25 @@
-# 🛠️ How to Compile PyCity on Windows
+# Src/Mods/lua/
 
-This project features a native Windows compilation script (`build.bat`). You can build both 64-bit and legacy 32-bit versions of the game directly on your computer without installing heavy Linux environments or complex IDEs.
+This is the official Lua 5.4.7 source, copied in as an amalgamated
+"library" build so PyCity can embed a Lua interpreter without dragging
+in a full separate build step or external dependency.
 
----
-
-## 📋 Prerequisites
-
-Before running the builder, you only need one portable tool:
-
-1. Download **w64devkit** (a minimal, portable C/C++ compiler suite for Windows).
-   * Get it from the official GitHub releases: `https://github.com/skeeto/w64devkit/releases`
-2. Unzip the archive to a clean directory on your machine (e.g., `C:\w64devkit`).
-
----
-
-## 🔨 Step-by-Step Compilation
-
-1. **Download the Source**: Download this repository as a ZIP file and extract it into a folder.
-2. **Launch the Builder**: Double-click the `build.bat` file in the main project folder.
-3. **Run First-Time Setup**: The script will automatically open a setup configuration wizard:
-   * Paste the absolute path to your 64-bit compiler bin folder (e.g., `C:\w64devkit\bin`).
-   * If compiling 32-bit, paste the path to your 32-bit compiler bin folder.
-4. **Choose Your Target**: The master menu will appear. Enter your choice:
-   * Press `1` for a modern **64-bit Production Build** (`pycity-win64.exe`).
-   * Press `2` for a legacy **32-bit Compatibility Build** (`pycity-win32.exe`).
-   * Press `3` to trigger **Parallel Builds** and compile both architectures at the exact same moment.
-
-The builder handles the system pathways and uses `mingw32-make` to compile the source code for 32 bit. Once finished, your executable will drop straight into the main folder, ready to play!
+- **Source**: https://github.com/lua/lua, tag `v5.4.7`.
+- **What's here**: every `.c`/`.h` file from that tag *except*
+  `lua.c`, `luac.c`, `ltests.c`, and `ltests.h` - those are the
+  standalone `lua`/`luac` command-line binaries and Lua's own internal
+  test harness, none of which PyCity needs as an embedded library.
+- **How it's built**: `onelua.c` is Lua's own official single-file
+  amalgamation - it `#include`s all the other `.c` files in this folder
+  itself. Compiling `onelua.c` alone (with `-DMAKE_LIB`, see the
+  Makefile) produces the whole interpreter as one translation unit.
+  `-DMAKE_LIB` skips the `#include "lua.c"` / `#include "luac.c"` blocks
+  at the bottom of `onelua.c`, so no `main()` is defined here - it's a
+  pure library, meant to be driven from `Mods/ModLoader.c`.
+- **License**: Lua's MIT license. See `lua.h`'s header comment or
+  https://www.lua.org/license.html - unmodified from upstream, not
+  PyCity's own license.
+- **Not modified**: nothing in this folder has been changed from the
+  upstream tag. If Lua ships a security fix or a new version, the whole
+  folder can just be replaced wholesale from a newer tag of
+  `github.com/lua/lua` (same file list as above).
