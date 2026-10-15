@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyCity: a road-building city sim for Windows</title>
+<meta name="description" content="PyCity is a free top-down city builder for Windows. Lay roads, place farms, factories and houses, and keep the trucks moving.">
+<meta property="og:title" content="PyCity: a road-building city sim for Windows">
+<meta property="og:description" content="PyCity is a free top-down city builder for Windows. Lay roads, place farms, factories and houses, and keep the trucks moving.">
+<meta property="og:type" content="website">
+<link rel="icon" href="/favicon.ico">
+<meta name="google-site-verification" content="2zgqKKHUSkl5IyufoA1ti847DuWR_LLUflK5EaOfm2M">
+<script>try{var t=localStorage.getItem('site-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-head">
+  <div class="wrap">
+    <a class="wordmark" href="./"><img class="pixel" src="img/house.png" alt="" width="28" height="28">PyCity</a>
+    <nav class="site-nav" aria-label="Main"><a href="download.html">Download</a><a href="Beta-Download.html">Beta builds</a><a href="Compiling.html">Build from source</a><a href="save_convert.html">Save converter</a><a href="https://github.com/pixel-pulse-games/pycity">Source</a></nav>
+    <button class="theme-btn" id="theme-toggle" type="button">Dark theme</button>
+  </div>
+  <div class="road-rule" aria-hidden="true"></div>
+</header>
+<main id="main">
+
+<div class="hero">
+  <div class="wrap">
+    <h1>Lay the roads.<br>Keep the trucks moving.</h1>
+    <p class="lede">PyCity is a top-down city builder for Windows. Place roads, farms, factories and houses, then watch trucks carry food and goods across the map you built.</p>
+    <div class="actions">
+      <a class="btn" href="download.html">Download for Windows</a>
+      <span class="fine">Free. Current version: <span data-latest-version>v1.0.1</span>.</span>
+    </div>
+    <div class="city-wrap">
+      <canvas id="city" class="city pixel" role="img" aria-label="A live demo city: trucks drive along sandy roads between farms, factories and houses. Click a tile to add or remove a road."></canvas>
+      <div class="city-bar">
+        <span>Click grass to lay a road. Click a road to remove it. <button class="link-btn" id="city-reset" type="button">Reset the city</button></span>
+        <span>Deliveries: <span id="city-deliveries">0</span></span>
+      </div>
+      <noscript><p class="fine">Turn on JavaScript to see the live demo city.</p></noscript>
+    </div>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2>How the city works</h2>
+    <p>Every farm, factory and house belongs to one of two chains, grain or timber, and only trades with buildings in its own chain. A building needs a road beside it to take part.</p>
+    <ol class="chain">
+      <li><img class="pixel" src="img/farm.png" alt="A farm tile"><div><h3>Farms grow food</h3><p>When enough has grown, a truck carries it to a factory that needs it.</p></div></li>
+      <li><img class="pixel" src="img/factory.png" alt="A factory tile"><div><h3>Factories make goods</h3><p>They turn the food into goods and send a truck to a house that wants them.</p></div></li>
+      <li><img class="pixel" src="img/house.png" alt="A house tile"><div><h3>Houses pay tax</h3><p>They ask for goods as they fill up with demand. Keep that demand met and the city runs smoothly.</p></div></li>
+    </ol>
+    <p class="chain-note">Busy road tiles slow trucks down, so a map with one road for everything jams up. Houses far from a police station slowly attract theft, and a station protects about nine tiles around it.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>What&rsquo;s new</h2>
+    <dl class="news">
+      <dt>Game speed<span class="tag">Next release</span></dt>
+      <dd>Press <kbd>Tab</kbd> to run the city at 1x, 2x or 4x. Growth, tax, crime and trucks all speed up together.</dd>
+      <dt>Mods</dt>
+      <dd>PyCity can now load Lua scripts from a <code>mods</code> folder to change costs, tax, crime and traffic. Mods run in a sandbox with no access to your files. Read the <a href="https://github.com/pixel-pulse-games/pycity/blob/main/MODDING.md">modding guide</a>.</dd>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Controls</h2>
+    <div class="table-scroll">
+    <table>
+      <caption>Costs shown are the defaults. Mods can change them.</caption>
+      <thead><tr><th scope="col">Key</th><th scope="col">What it does</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>1</kbd> to <kbd>6</kbd></td><td>Pick a tool: road ($10), house ($50), factory ($150), farm ($100), police station ($200) or bulldoze (refunds half the cost).</td></tr>
+        <tr><td>Left click</td><td>Use the tool on the tile under the mouse.</td></tr>
+        <tr><td>Arrow keys or <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></td><td>Pan the map.</td></tr>
+        <tr><td>Mouse wheel, <kbd>+</kbd> or <kbd>-</kbd></td><td>Zoom in and out.</td></tr>
+        <tr><td><kbd>Space</kbd></td><td>Pause or resume.</td></tr>
+        <tr><td><kbd>Tab</kbd></td><td>Change game speed. Next release.</td></tr>
+        <tr><td><kbd>F5</kbd> and <kbd>F9</kbd></td><td>Save and load your city.</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Quit.</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
+<div class="cta">
+  <section>
+    <div class="wrap">
+      <h2>Build your first city in a few minutes.</h2>
+      <a class="btn" href="download.html">Download for Windows</a>
+    </div>
+  </section>
+</div>
+
+</main>
+<footer class="site-foot">
+  <div class="wrap">
+    <p>PyCity <span data-latest-version>v1.0.1</span> is a free city builder for Windows. <a href="https://github.com/pixel-pulse-games/pycity">Source on GitHub</a>.</p>
+    <p>Tile art from Kenney&rsquo;s free asset packs (<a href="https://kenney.nl">kenney.nl</a>).</p>
+  </div>
+</footer>
+<script src="site.js"></script>
+<script src="city.js"></script>
+</body>
+</html>

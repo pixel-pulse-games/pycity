@@ -1,0 +1,199 @@
+/* PyCity site — shared styles. Palette is sampled from the game's own tiles. */
+:root {
+  --page: #e4ecd3;
+  --panel: #f4f7ea;
+  --ink: #1f2e25;
+  --ink-soft: #46574c;
+  --line: #bccaa6;
+  --road: #eaa56c;
+  --accent: #b83a0a;       /* truck orange, dark enough for white text */
+  --accent-ink: #ffffff;
+  --gold: #f2c14e;
+  --link: #8f3008;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --page: #141c17;
+  --panel: #1c2721;
+  --ink: #e8ede2;
+  --ink-soft: #a9b6ab;
+  --line: #2f3d34;
+  --road: #c98a52;
+  --accent: #ff8a57;
+  --accent-ink: #1a1208;
+  --gold: #f2c14e;
+  --link: #ffa77d;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #141c17;
+    --panel: #1c2721;
+    --ink: #e8ede2;
+    --ink-soft: #a9b6ab;
+    --line: #2f3d34;
+    --road: #c98a52;
+    --accent: #ff8a57;
+    --accent-ink: #1a1208;
+    --gold: #f2c14e;
+    --link: #ffa77d;
+    color-scheme: dark;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+  font-size: 1.125rem;
+  line-height: 1.65;
+}
+img { max-width: 100%; }
+.pixel { image-rendering: pixelated; image-rendering: crisp-edges; }
+
+a { color: var(--link); text-underline-offset: 0.2em; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; border-radius: 3px; }
+
+h1, h2, h3, .wordmark {
+  font-family: "Overpass", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.1;
+  margin: 0;
+}
+h1 { font-size: clamp(2.4rem, 6.4vw, 4.4rem); font-weight: 800; letter-spacing: -0.015em; }
+h2 { font-size: clamp(1.6rem, 3.4vw, 2.1rem); font-weight: 800; letter-spacing: -0.01em; }
+h3 { font-size: 1.2rem; font-weight: 700; }
+p { margin: 0 0 1em; max-width: 62ch; }
+code, kbd {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.05em 0.35em;
+}
+kbd { border-bottom-width: 2px; }
+
+.wrap { width: min(100% - 2.5rem, 62rem); margin-inline: auto; }
+.skip { position: absolute; left: -999px; top: 0; background: var(--ink); color: var(--page); padding: 0.5rem 1rem; z-index: 10; }
+.skip:focus { left: 0.5rem; top: 0.5rem; }
+
+/* ---------- header: the one road ---------- */
+.site-head { padding-top: 1rem; }
+.site-head .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.75rem; padding-bottom: 0.9rem; }
+.wordmark { font-size: 1.7rem; font-weight: 800; text-decoration: none; color: var(--ink); margin-right: auto; display: inline-flex; align-items: center; gap: 0.55rem; }
+.wordmark img { width: 28px; height: 28px; }
+.site-nav { display: flex; flex-wrap: wrap; gap: 0.25rem 1.4rem; font-family: "Overpass", Arial, sans-serif; font-weight: 600; font-size: 1.02rem; }
+.site-nav a { color: var(--ink-soft); text-decoration: none; padding: 0.25rem 0; border-bottom: 2px solid transparent; }
+.site-nav a:hover { color: var(--ink); border-bottom-color: var(--road); }
+.site-nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+.theme-btn {
+  font: 600 0.9rem "Overpass", Arial, sans-serif;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+.theme-btn:hover { border-color: var(--ink-soft); }
+.road-rule {
+  height: 10px;
+  background:
+    repeating-linear-gradient(90deg, var(--gold) 0 18px, transparent 18px 36px) center / 100% 2px no-repeat,
+    var(--road);
+}
+
+/* ---------- hero ---------- */
+.hero { padding: clamp(1.75rem, 4vw, 3rem) 0 2rem; }
+.hero h1 { font-size: clamp(2.2rem, 5.6vw, 3.8rem); max-width: 16em; text-wrap: balance; }
+.hero .lede { font-size: 1.25rem; color: var(--ink-soft); margin: 1rem 0 1.4rem; max-width: 46ch; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.5rem; }
+.btn {
+  display: inline-block;
+  font: 700 1.1rem "Overpass", Arial, sans-serif;
+  background: var(--accent);
+  color: var(--accent-ink);
+  text-decoration: none;
+  padding: 0.8rem 1.5rem;
+  border-radius: 6px;
+}
+.btn:hover { filter: brightness(1.08); text-decoration: none; }
+.btn.quiet { background: transparent; color: var(--ink); border: 2px solid var(--ink-soft); padding: calc(0.8rem - 2px) calc(1.5rem - 2px); }
+.btn.quiet:hover { border-color: var(--ink); filter: none; }
+.fine { color: var(--ink-soft); font-size: 0.98rem; }
+
+.city-wrap { margin-top: 2rem; }
+.city {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 3px solid var(--ink);
+  border-radius: 4px;
+  background: #84c669;
+  cursor: crosshair;
+  touch-action: manipulation;
+}
+.city-bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem 1.5rem; margin-top: 0.7rem; font-size: 0.98rem; color: var(--ink-soft); }
+.link-btn { font: inherit; color: var(--link); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 0.2em; }
+
+/* ---------- sections ---------- */
+section { padding: 3rem 0; }
+section > .wrap > h2 { margin-bottom: 1rem; }
+.chain { display: flex; flex-wrap: wrap; align-items: stretch; gap: 1.5rem; margin: 2rem 0 0; padding: 0; list-style: none; }
+.chain li { flex: 1 1 12rem; display: flex; gap: 1rem; align-items: flex-start; }
+.chain img { width: 64px; height: 64px; flex: none; border: 2px solid var(--ink); border-radius: 3px; background: #84c669; }
+.chain h3 { margin-bottom: 0.2rem; }
+.chain p { margin: 0; font-size: 1rem; color: var(--ink-soft); }
+.chain-note { margin-top: 1.5rem; }
+
+.news { margin: 0; }
+.news dt { font: 700 1.15rem "Overpass", Arial, sans-serif; margin-top: 1.5rem; }
+.news dt:first-child { margin-top: 0; }
+.news dd { margin: 0.2rem 0 0; max-width: 62ch; color: var(--ink-soft); }
+.news .tag { font: 600 0.9rem "Overpass", Arial, sans-serif; color: var(--ink); background: var(--gold); border-radius: 4px; padding: 0.1rem 0.5rem; margin-left: 0.5rem; vertical-align: 0.1em; }
+
+table { border-collapse: collapse; width: 100%; max-width: 48rem; background: var(--panel); border: 1px solid var(--line); }
+caption { text-align: left; padding-bottom: 0.6rem; color: var(--ink-soft); font-size: 1rem; }
+td:first-child, th:first-child { white-space: nowrap; }
+th, td { text-align: left; padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 700 1rem "Overpass", Arial, sans-serif; background: color-mix(in srgb, var(--panel) 70%, var(--line)); }
+tr:last-child td { border-bottom: 0; }
+.table-scroll { overflow-x: auto; }
+
+.cta { background: var(--panel); border-block: 1px solid var(--line); }
+.cta .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1.25rem 2rem; }
+.cta h2 { max-width: 20ch; }
+
+/* ---------- content pages ---------- */
+.page { padding: clamp(2rem, 5vw, 3.5rem) 0 3rem; }
+.page h1 { font-size: clamp(2rem, 5vw, 3rem); margin-bottom: 1rem; }
+.page h2 { margin: 2.5rem 0 0.75rem; }
+.page ol, .page ul { max-width: 62ch; padding-left: 1.4rem; }
+.page li { margin-bottom: 0.45rem; }
+.page li > ul { margin-top: 0.45rem; }
+.dl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(14.5rem, 1fr)); gap: 1rem; margin: 1.5rem 0 0; max-width: 58rem; }
+.dl { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 1.25rem; }
+.page .dl h2 { font-size: 1.5rem; margin: 0 0 0.3rem; }
+.dl p { font-size: 1rem; color: var(--ink-soft); margin-bottom: 1rem; }
+.note { background: var(--panel); border-left: 6px solid var(--road); padding: 0.9rem 1.1rem; max-width: 62ch; }
+.note p:last-child { margin-bottom: 0; }
+#latest-release-info .release { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 1.1rem 1.25rem; max-width: 62ch; }
+#latest-release-info .release h3 { margin-bottom: 0.4rem; }
+#latest-release-info .release h4 { font: 700 1.05rem "Overpass", Arial, sans-serif; margin: 1rem 0 0.2rem; }
+#latest-release-info .release p, #latest-release-info .release ul { font-size: 1rem; margin: 0.3rem 0; }
+
+/* ---------- footer ---------- */
+.site-foot { padding: 2rem 0 3rem; font-size: 0.98rem; color: var(--ink-soft); border-top: 1px solid var(--line); margin-top: 1rem; }
+.site-foot p { max-width: none; margin: 0 0 0.4rem; }
+
+@media (max-width: 34rem) {
+  body { font-size: 1.05rem; }
+  .theme-btn { order: 2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; transition: none !important; }
+}

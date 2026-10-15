@@ -1,0 +1,250 @@
+name: Release
+
+# Builds PyCity for Windows and publishes a GitHub release.
+#   - The version comes from the VERSION file (e.g. "1.1.0" -> tag "v1.1.0").
+#     A version with a suffix ("1.2.0-rc.1") is published as a pre-release,
+#     which GitHub's "latest release" (and so the in-game updater) ignores.
+#   - The release notes come from RELEASE.md.
+#
+# To release: edit VERSION and RELEASE.md, then push to main.
+# To test the build without publishing: Actions > Release > Run workflow,
+# and leave "publish" unticked. The built files are kept as a workflow artifact.
+
+on:
+  push:
+    branches: [main]
+    paths: [VERSION]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish a GitHub release (leave unticked to only build)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  # Toolchains are pinned by version and SHA-256, same w64devkit that
+  # docs/Compiling.html tells people to install.
+  W64DEVKIT_TAG: v2.10.1
+  W64DEVKIT_X64_SHA256: add1edf984ce4d473cfeb7c52e0ab38db73a855bba6c7f564d5e16648eb2896a
+  W64DEVKIT_X86_SHA256: 8821e6e4aa42d7eb42bf0cbabd18c4175fb0422bf96f4a178e1530b4ca69c73f
+
+jobs:
+  # Cheap checks first, so a typo in VERSION fails in seconds, not after a
+  # full Windows build.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      publish: ${{ steps.meta.outputs.publish }}
+      skip: ${{ steps.meta.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read VERSION and RELEASE.md
+        id: meta
+        env:
+          EVENT: ${{ github.event_name }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+
+          [ -f VERSION ] || { echo "::error::VERSION file not found in the repo root."; exit 1; }
+          raw=$(tr -d '[:space:]' < VERSION)
+          ver=${raw#v}; ver=${ver#V}
+          if ! [[ $ver =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::VERSION contains '$raw'. Use a version like 1.2.3 or 1.2.3-rc.1."
+            exit 1
+          fi
+          tag="v$ver"
+
+          if [ ! -f RELEASE.md ] || ! grep -q '[^[:space:]]' RELEASE.md; then
+            echo "::error::RELEASE.md is missing or empty. It becomes the release notes."
+            exit 1
+          fi
+
+          # The window title in Main.c is hard-coded, so make sure it was bumped too.
+          if ! grep -qF "PyCity - $tag" Src/Main.c; then
+            echo "::error::Src/Main.c doesn't contain 'PyCity - $tag'. Update the version in Main.c to match VERSION."
+            exit 1
+          fi
+
+          prerelease=false
+          [[ $ver == *-* ]] && prerelease=true
+
+          # A push to main always publishes; a manual run publishes only if ticked.
+          publish=false
+          if [ "$EVENT" = "push" ] || [ "$PUBLISH_INPUT" = "true" ]; then publish=true; fi
+
+          skip=false
+          if [ "$publish" = "true" ] && git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            if [ "$EVENT" = "push" ]; then
+              echo "::notice::Tag $tag already exists, so there is nothing new to release. Bump VERSION to release again."
+              skip=true
+            else
+              echo "::error::Tag $tag already exists. Bump VERSION first, or run again with 'publish' unticked."
+              exit 1
+            fi
+          fi
+
+          {
+            echo "version=$ver"
+            echo "tag=$tag"
+            echo "prerelease=$prerelease"
+            echo "publish=$publish"
+            echo "skip=$skip"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+      PUBLISH: ${{ needs.prepare.outputs.publish }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the 64-bit and 32-bit toolchains
+        run: |
+          $ProgressPreference = 'SilentlyContinue'  # makes Invoke-WebRequest much faster
+          $dest = Join-Path $env:RUNNER_TEMP 'toolchains'
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          $sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue)?.Source ?? "$env:ProgramFiles\7-Zip\7z.exe"
+          "SEVEN_ZIP=$sevenZip" >> $env:GITHUB_ENV
+          $ver = $env:W64DEVKIT_TAG.TrimStart('v')
+
+          $toolchains = @(
+            @{ arch = 'x64'; dir = 'w64'; sha = $env:W64DEVKIT_X64_SHA256; envVar = 'W64_BIN' },
+            @{ arch = 'x86'; dir = 'w32'; sha = $env:W64DEVKIT_X86_SHA256; envVar = 'W32_BIN' }
+          )
+          foreach ($t in $toolchains) {
+            $file = "w64devkit-$($t.arch)-$ver.7z.exe"
+            $path = Join-Path $dest $file
+            Invoke-WebRequest "https://github.com/skeeto/w64devkit/releases/download/$($env:W64DEVKIT_TAG)/$file" -OutFile $path
+            $hash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLower()
+            if ($hash -ne $t.sha) { throw "Checksum mismatch for $file. Expected $($t.sha), got $hash." }
+            & $sevenZip x $path "-o$(Join-Path $dest $t.dir)" -y | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Could not extract $file." }
+            $bin = Join-Path $dest "$($t.dir)\w64devkit\bin"
+            foreach ($tool in 'gcc.exe', 'make.exe', 'windres.exe') {
+              if (-not (Test-Path (Join-Path $bin $tool))) { throw "$tool not found in $bin." }
+            }
+            "$($t.envVar)=$bin" >> $env:GITHUB_ENV
+            Write-Host "$($t.arch) toolchain ready: $bin"
+          }
+
+      - name: Build (build.bat --CI)
+        working-directory: Src
+        shell: cmd
+        run: |
+          (
+            echo TARGET=all
+            echo W64_BIN_PATH=%W64_BIN%
+            echo W32_BIN_PATH=%W32_BIN%
+          ) > build.txt
+          call build.bat --CI
+          if errorlevel 1 exit /b 1
+
+      # build.bat --CI exits 0 even if make failed, so check the results
+      # ourselves. Also check each exe is the right architecture: build.bat's
+      # own history notes a bug where both builds used the 64-bit toolchain.
+      - name: Verify the build output
+        run: |
+          function Get-PeMachine([string]$p) {
+            $b = [IO.File]::ReadAllBytes($p)
+            $o = [BitConverter]::ToInt32($b, 0x3C)
+            '{0:x4}' -f [BitConverter]::ToUInt16($b, $o + 4)
+          }
+          $expected = [ordered]@{
+            'pycity-win64.exe' = '8664'
+            'pycity-win32.exe' = '014c'
+            'Patcher.exe'      = '014c'
+            'Bootstrap.exe'    = '014c'
+          }
+          foreach ($name in $expected.Keys) {
+            $p = Join-Path 'Src' $name
+            if (-not (Test-Path $p)) { throw "The build did not produce $name." }
+            $m = Get-PeMachine $p
+            if ($m -ne $expected[$name]) { throw "$name has machine type 0x$m, expected 0x$($expected[$name])." }
+            Write-Host "OK  $name (0x$m)"
+          }
+
+      # Zip layout matches what Patcher.exe expects: the game exe at the zip
+      # root with assets/ beside it (it overlays the zip onto the install folder).
+      - name: Package
+        run: |
+          $dist = Join-Path $env:RUNNER_TEMP 'dist'
+          $stage = Join-Path $env:RUNNER_TEMP 'stage'
+          New-Item -ItemType Directory -Force $dist, $stage | Out-Null
+
+          foreach ($arch in 'win64', 'win32') {
+            $dir = Join-Path $stage $arch
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            Copy-Item "Src/pycity-$arch.exe" $dir
+            Copy-Item 'Src/assets' (Join-Path $dir 'assets') -Recurse
+            Copy-Item 'LICENSE' $dir
+            Push-Location $dir
+            & $env:SEVEN_ZIP a -tzip -mx=9 (Join-Path $dist "pycity-$arch.zip") '*' | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Could not create pycity-$arch.zip." }
+            Pop-Location
+          }
+
+          # Bootstrap.exe fetches an asset named exactly "Patcher.zip".
+          $pdir = Join-Path $stage 'patcher'
+          New-Item -ItemType Directory -Force $pdir | Out-Null
+          Copy-Item 'Src/Patcher.exe' $pdir
+          Push-Location $pdir
+          & $env:SEVEN_ZIP a -tzip -mx=9 (Join-Path $dist 'Patcher.zip') '*' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Could not create Patcher.zip.' }
+          Pop-Location
+
+          Copy-Item 'Src/Bootstrap.exe' $dist
+
+          # checksums.txt, same format and order as .github/workflows/checksums.yml.
+          # Made here so the release never exists without it.
+          $lines = foreach ($pair in @(@('win64', 'pycity-win64.zip'), @('win32', 'pycity-win32.zip'), @('patcher', 'Patcher.zip'))) {
+            $h = (Get-FileHash (Join-Path $dist $pair[1]) -Algorithm SHA256).Hash.ToLower()
+            "$($pair[0])=$h"
+          }
+          $lines | Out-File -Encoding ascii (Join-Path $dist 'checksums.txt')
+
+          "DIST=$dist" >> $env:GITHUB_ENV
+          Get-Content (Join-Path $dist 'checksums.txt')
+          Get-ChildItem $dist | Format-Table Name, Length
+
+          "### PyCity $env:TAG" >> $env:GITHUB_STEP_SUMMARY
+          '' >> $env:GITHUB_STEP_SUMMARY
+          '| File | Size (KB) |' >> $env:GITHUB_STEP_SUMMARY
+          '| --- | --- |' >> $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem $dist | ForEach-Object { "| $($_.Name) | $([math]::Round($_.Length / 1KB)) |" >> $env:GITHUB_STEP_SUMMARY }
+
+      - name: Keep the built files as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pycity-${{ needs.prepare.outputs.tag }}
+          path: ${{ runner.temp }}/dist/*
+          retention-days: 14
+
+      - name: Publish the release
+        if: env.PUBLISH == 'true'
+        run: |
+          $files = Get-ChildItem $env:DIST | ForEach-Object { $_.FullName }
+          $flags = @('--title', "PyCity $env:TAG", '--notes-file', 'RELEASE.md', '--target', $env:GITHUB_SHA)
+          if ($env:PRERELEASE -eq 'true') { $flags += '--prerelease' } else { $flags += '--latest' }
+          gh release create $env:TAG @files @flags
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create failed.' }
+          "Published: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$env:TAG" >> $env:GITHUB_STEP_SUMMARY

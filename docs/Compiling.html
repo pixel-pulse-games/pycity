@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build PyCity on Windows</title>
+<meta name="description" content="Compile PyCity from source on Windows with w64devkit and the included build.bat script.">
+<meta property="og:title" content="Build PyCity on Windows">
+<meta property="og:description" content="Compile PyCity from source on Windows with w64devkit and the included build.bat script.">
+<meta property="og:type" content="website">
+<link rel="icon" href="/favicon.ico">
+<script>try{var t=localStorage.getItem('site-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-head">
+  <div class="wrap">
+    <a class="wordmark" href="./"><img class="pixel" src="img/house.png" alt="" width="28" height="28">PyCity</a>
+    <nav class="site-nav" aria-label="Main"><a href="download.html">Download</a><a href="Beta-Download.html">Beta builds</a><a href="Compiling.html" aria-current="page">Build from source</a><a href="save_convert.html">Save converter</a><a href="https://github.com/pixel-pulse-games/pycity">Source</a></nav>
+    <button class="theme-btn" id="theme-toggle" type="button">Dark theme</button>
+  </div>
+  <div class="road-rule" aria-hidden="true"></div>
+</header>
+<main id="main">
+
+<div class="page">
+  <div class="wrap">
+    <h1>Build PyCity on Windows</h1>
+    <p>PyCity is written in C with the lightweight <strong>raylib</strong> library. The repository includes a Windows build script, <code>build.bat</code>, that makes a 64-bit build, a 32-bit build, or both. You don&rsquo;t need a large IDE or a Linux layer.</p>
+
+    <h2>Get the compilers</h2>
+    <p>The script uses a portable toolchain called <strong>w64devkit</strong>. Download the version for each build you want to make.</p>
+    <ol>
+      <li>Open the <a href="https://github.com/skeeto/w64devkit/releases">w64devkit releases page</a>.</li>
+      <li>Download the 64-bit toolchain (<code>w64devkit-x64-X.X.X.7z.exe</code>) for the main build.</li>
+      <li>Download the 32-bit toolchain (<code>w64devkit-x86-X.X.X.7z.exe</code>) if you also want the 32-bit build.</li>
+      <li>Run each file. It is a self-extracting archive, so pick a permanent folder for it, for example <code>C:\w64devkit</code> and <code>C:\w32devkit</code>. Each one unpacks into a <code>w64devkit</code> folder inside the one you chose.</li>
+    </ol>
+
+    <h2>Set the paths</h2>
+    <p>The first time you run <code>build.bat</code>, it finds no settings and starts a short setup.</p>
+    <ol>
+      <li>Open your PyCity folder and double-click <code>build.bat</code>.</li>
+      <li>When asked, paste the path to each compiler&rsquo;s <code>bin</code> folder, the one that contains <code>gcc.exe</code> and <code>make.exe</code>. Leave out quotation marks.
+        <ul>
+          <li>64-bit: <code>C:\w64devkit\w64devkit\bin</code></li>
+          <li>32-bit: <code>C:\w32devkit\w64devkit\bin</code></li>
+        </ul>
+      </li>
+      <li>Press Enter. The script saves your paths to a file named <code>config.ini</code>.</li>
+    </ol>
+
+    <h2>Choose a build</h2>
+    <p>After setup, <code>build.bat</code> shows a menu.</p>
+    <ul>
+      <li><strong>1</strong> builds the 64-bit game (<code>pycity-win64.exe</code>) using <code>raylib64/src</code>.</li>
+      <li><strong>2</strong> builds the 32-bit game (<code>pycity-win32.exe</code>) using <code>raylib32/src</code>.</li>
+      <li><strong>3</strong> builds both, one after the other.</li>
+    </ul>
+
+    <h2>Change the paths later</h2>
+    <p>If you move a compiler folder or mistype a path, run <code>build.bat</code> and press <strong>r</strong> to reset the configuration. The script deletes <code>config.ini</code> and starts the setup again.</p>
+  </div>
+</div>
+
+</main>
+<footer class="site-foot">
+  <div class="wrap">
+    <p>PyCity <span data-latest-version>v1.0.1</span> is a free city builder for Windows. <a href="https://github.com/pixel-pulse-games/pycity">Source on GitHub</a>.</p>
+    <p>Tile art from Kenney&rsquo;s free asset packs (<a href="https://kenney.nl">kenney.nl</a>).</p>
+  </div>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>

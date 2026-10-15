@@ -1,5 +1,8 @@
-// PyCity - v1.0.1
-// Built on top of v1.0.0-rc.1. Adds Lua modding: startup-only economy
+// PyCity - v1.1.0
+// Feature update on top of v1.0.1: adds a game speed control (Tab cycles
+// 1x / 2x / 4x simulation speed, shown in the HUD). No save-format or
+// balance changes.
+// v1.0.1 (below) was built on top of v1.0.0-rc.1. Added Lua modding: startup-only economy
 // overrides (Mods/ModLoader.h's EconomyTunables + g_econ below), the
 // mid-game pycity.on_broke hook (see TryPlaceBuilding() below), and
 // pycity.message() for in-game toast feedback. See MODDING.md for the
@@ -16,6 +19,7 @@
 //   Arrows / WASD     = pan camera
 //   Mouse wheel       = zoom in/out (centered on screen)   -/= = zoom (keyboard alt)
 //   Space             = pause/unpause simulation
+//   Tab               = cycle simulation speed (1x / 2x / 4x)
 //   F5                = save     F9 = load
 //   Esc               = quit
 //
@@ -1290,7 +1294,7 @@ int main(void) {
     // whatever g_econ.startingMoney ended up being.
     money = g_econ.startingMoney;
 
-    InitWindow(SCREEN_W, SCREEN_H, "PyCity - v1.0.1");
+    InitWindow(SCREEN_W, SCREEN_H, "PyCity - v1.1.0");
     SetTargetFPS(60);
 
     // Textures need a GPU context, so this has to happen after InitWindow().
@@ -1304,6 +1308,12 @@ int main(void) {
 
     Tool tool = TOOL_ROAD;
     bool paused = false;
+    // Simulation speed: how many times UpdateBuildings()/UpdateTrucks() run
+    // per rendered frame. All balance numbers are per-frame, so this scales
+    // everything uniformly (growth, tax, crime, trucks) with no formula changes.
+    // Cycled with TAB; not saved (always starts at 1x).
+    static const int SPEED_STEPS[] = {1, 2, 4};
+    int speedIdx = 0;
 
     while (!WindowShouldClose()) {
         // ---- input ----
@@ -1314,6 +1324,7 @@ int main(void) {
         if (IsKeyPressed(KEY_FIVE))  tool = TOOL_POLICE;
         if (IsKeyPressed(KEY_SIX))   tool = TOOL_BULLDOZE;
         if (IsKeyPressed(KEY_SPACE)) paused = !paused;
+        if (IsKeyPressed(KEY_TAB)) speedIdx = (speedIdx + 1) % (int)(sizeof(SPEED_STEPS)/sizeof(SPEED_STEPS[0]));
         if (IsKeyPressed(KEY_F5)) SaveGame();
         if (IsKeyPressed(KEY_F9)) LoadGame();
 
@@ -1384,8 +1395,10 @@ int main(void) {
         bool aprilFools = IsAprilFoolsToday();
         winterActive = IsWinterToday();
         if (!paused) {
-            UpdateBuildings();
-            UpdateTrucks();
+            for (int step = 0; step < SPEED_STEPS[speedIdx]; step++) {
+                UpdateBuildings();
+                UpdateTrucks();
+            }
             if (aprilFools && GetRandomValue(0, APRIL_FOOLS_SPAWN_CHANCE) == 0) {
                 SpawnAprilFoolsItem();
             }
@@ -1444,8 +1457,8 @@ int main(void) {
         double demandMetPct = (totalDemandGenerated > 0.001) ? (totalDemandServed/totalDemandGenerated*100.0) : 100.0;
         Color moneyColor = (money < g_econ.costRoad) ? (Color){220,60,50,255} : (Color){237,232,222,255};
         DrawText(TextFormat("Money: $%.0f", money), 10, 52, 18, moneyColor);
-        DrawText(TextFormat("Deliveries: %d   Buildings: %d   Demand met: %.0f%%   %s",
-                  deliveries, buildingCount, demandMetPct, paused ? "[PAUSED]" : ""),
+        DrawText(TextFormat("Deliveries: %d   Buildings: %d   Demand met: %.0f%%   Speed: %dx   %s",
+                  deliveries, buildingCount, demandMetPct, SPEED_STEPS[speedIdx], paused ? "[PAUSED]" : ""),
                   10, 32, 16, (Color){237,232,222,255});
 
         if (aprilFools) {
@@ -1453,7 +1466,7 @@ int main(void) {
         } else if (winterActive) {
             DrawText("Winter", SCREEN_W-260, 8, 16, (Color){200,220,255,255});
         }
-        DrawText("F5 save   F9 load   Arrows/WASD pan   Wheel/+- zoom", SCREEN_W-350, 20, 14, (Color){160,160,150,255});
+        DrawText("Space pause  Tab speed  F5/F9 save/load  WASD pan  +/- zoom", SCREEN_W-350, 20, 14, (Color){160,160,150,255});
 
         // Legend for the little corner dots on farms/factories/houses -
         // otherwise a gold vs teal dot means nothing to a new player.
