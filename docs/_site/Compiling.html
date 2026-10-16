@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>PyCity | A road-building city simulation game.</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="PyCity" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="A road-building city simulation game." />
+<meta name="twitter:description" property="og:description" content="A road-building city simulation game." />
+<link rel="canonical" href="https://pycity.pages.dev/Compiling.html" />
+<meta property="og:url" content="https://pycity.pages.dev/Compiling.html" />
+<meta property="og:site_name" content="PyCity" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="PyCity" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"A road-building city simulation game.","headline":"PyCity","url":"https://pycity.pages.dev/Compiling.html"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">PyCity</h1>
+      <h2 class="project-tagline">A road-building city simulation game.</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+
+<h3 id="️-compiling-pycity-natively-on-windows">🛠️ Compiling PyCity Natively on Windows</h3>
+
+<p><a href="/">Home Page</a></p>
+
+<script src="theme.js"></script>
+
+<p>PyCity is written in C/C++ using the ultra-lightweight <strong>Raylib</strong> graphics library. To keep things fast and transparent, the game features a native Windows Master Builder script (<code class="language-plaintext highlighter-rouge">build.bat</code>).</p>
+
+<p>You can build modern 64-bit production builds or legacy 32-bit compatibility builds directly on your PC without installing massive IDEs, heavy development tools, or Linux emulation layers.</p>
+
+<hr />
+
+<h2 id="-1-prerequisites-get-the-compilers">📋 1. Prerequisites (Get the Compilers)</h2>
+
+<p>The build script relies on a portable C/C++ toolchain called <strong>w64devkit</strong>. Because it cuts out unnecessary bloat, you must grab the individual architecture files for the builds you want to make:</p>
+
+<ol>
+  <li>Head to the official compiler archive: <code class="language-plaintext highlighter-rouge">https://github.com/skeeto/w64devkit/releases</code></li>
+  <li>Download the <strong>64-bit toolchain</strong> (<code class="language-plaintext highlighter-rouge">w64devkit-x64-X.X.X.zip</code>) for the main 64-bit executable.</li>
+  <li>Download the <strong>32-bit toolchain</strong> (<code class="language-plaintext highlighter-rouge">w64devkit-x86-X.X.X.zip</code>) if you want to build the legacy 32-bit compatibility version.</li>
+  <li>Unzip them somewhere safe on your storage drive (e.g., <code class="language-plaintext highlighter-rouge">C:\w64devkit</code> and <code class="language-plaintext highlighter-rouge">C:\w32devkit</code>).</li>
+</ol>
+
+<hr />
+
+<h2 id="️-2-the-first-time-setup-wizard">⚙️ 2. The First-Time Setup Wizard</h2>
+
+<p>When you double-click the <strong><code class="language-plaintext highlighter-rouge">build.bat</code></strong> script for the first time, it automatically detects that no settings exist and launches the <strong>Path Configuration Wizard</strong>:</p>
+
+<ol>
+  <li>Open your extracted PyCity folder and launch <code class="language-plaintext highlighter-rouge">build.bat</code>.</li>
+  <li>The terminal will ask you to enter the absolute path to your compiler <code class="language-plaintext highlighter-rouge">bin</code> directories.</li>
+  <li><strong>Do not include quotation marks.</strong> Paste the direct paths to the folders containing <code class="language-plaintext highlighter-rouge">gcc.exe</code> and <code class="language-plaintext highlighter-rouge">make.exe</code>:
+    <ul>
+      <li><strong>64-bit Prompt:</strong> e.g., <code class="language-plaintext highlighter-rouge">C:\w64devkit\bin</code></li>
+      <li><strong>32-bit Prompt:</strong> e.g., <code class="language-plaintext highlighter-rouge">C:\w32devkit\bin</code></li>
+    </ul>
+  </li>
+  <li>Press Enter. The batch script will clean any trailing whitespaces, format the options, and save them into a permanent local file named <code class="language-plaintext highlighter-rouge">config.ini</code>.</li>
+</ol>
+
+<hr />
+
+<h2 id="-3-operating-the-master-builder-suite">🔨 3. Operating the Master Builder Suite</h2>
+
+<p>Once your configuration paths are saved, the main builder menu will load. Choose your target compilation mode:</p>
+
+<ul>
+  <li><strong><code class="language-plaintext highlighter-rouge">1</code> - x64 Production Build:</strong> Sets the path to your 64-bit compiler, hooks into the <code class="language-plaintext highlighter-rouge">raylib64/src</code> folder, and uses <code class="language-plaintext highlighter-rouge">make</code> to compile the standard 64-bit version (<code class="language-plaintext highlighter-rouge">pycity-win64.exe</code>).</li>
+  <li><strong><code class="language-plaintext highlighter-rouge">2</code> - x86 Legacy Compatibility Build:</strong> Temporarily changes your active system execution path to your 32-bit compiler, maps out the <code class="language-plaintext highlighter-rouge">raylib32/src</code> folder, and outputs the 32-bit version (<code class="language-plaintext highlighter-rouge">pycity-win32.exe</code>).</li>
+  <li><strong><code class="language-plaintext highlighter-rouge">3</code> - Build Both Architectures (Simultaneously):</strong> Spawns two independent, parallel background threads (<code class="language-plaintext highlighter-rouge">start /b cmd /c</code>). This fires off both the 64-bit and 32-bit compiler engines at the exact same moment to save time.</li>
+</ul>
+
+<hr />
+
+<h2 id="-how-to-reset-configuration-paths">🔄 How to Reset Configuration Paths</h2>
+
+<p>If you ever move your compiler directories, move your project folders, or type a path incorrectly during the first setup:</p>
+<ol>
+  <li>Launch <code class="language-plaintext highlighter-rouge">build.bat</code> to pull up the menu interface.</li>
+  <li>Press <strong><code class="language-plaintext highlighter-rouge">r</code></strong> to choose “Reset Configuration Paths”.</li>
+  <li>The script will wipe out your local <code class="language-plaintext highlighter-rouge">config.ini</code> file and immediately loop you back into the step-by-step setup wizard to put in fresh paths.</li>
+</ol>
+
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

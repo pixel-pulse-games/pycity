@@ -24,10 +24,9 @@
 // Build (from an MSYS2/MinGW dev shell):
 //   gcc bootstrap.c miniz.c -o Bootstrap.exe -lwininet -ladvapi32
 //
-// Requires a "patcher=<sha256>" line added to checksums.txt (see the
-// PowerShell snippet in the handoff doc) alongside the existing
-// "win64="/"win32=" lines - one more hash to generate at release time,
-// for Patcher.zip itself.
+// Requires a "patcher=<sha256>" line in checksums.txt, alongside the
+// "win64="/"win32=" lines - the hash of Patcher.zip itself. The release
+// workflow (.github/workflows/release.yml) generates it.
 
 #define _CRT_SECURE_NO_WARNINGS
 #ifndef _WIN32_WINNT

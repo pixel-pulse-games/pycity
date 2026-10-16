@@ -8,9 +8,9 @@ and show the player toast messages via `pycity.message()` - see below.
 > **Status.** Verified via a standalone test harness that loads real
 > mod scripts through a real Lua VM, bypassing raylib/the game entirely
 > - confirmed economy overrides, `on_broke`, `pycity.message()`,
-> sandboxing, and bytecode rejection all behave as documented here. Not
-> yet built with the real Windows toolchain or played in an actual game
-> session - see HANDOFF.md.
+> sandboxing, and bytecode rejection all behave as documented here. If a
+> mod behaves differently in the real game, please open an issue on
+> GitHub.
 
 ## Scope
 

@@ -1,11 +1,15 @@
+# Build outputs
 *.exe
-
-*.ini
 *.zip
-*.bak
-*.dat
 *.o
-*.jekyll-cache
-*_site
-*jekyll build
+*.bak
+
+# Local config and CI scratch files
+*.ini
+build.txt
+
+# Save files
+*.dat
+
+# Local deploy script
 deploy.bat

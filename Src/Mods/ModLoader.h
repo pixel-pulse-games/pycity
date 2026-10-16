@@ -15,9 +15,7 @@
 // Status: verified via a standalone Lua-loading test harness that
 // bypasses raylib/the game entirely (real mod scripts, real Lua VM,
 // confirmed load-order/clamping/sandboxing/bytecode-rejection/on_broke/
-// message-queue behavior all work as documented). NOT yet built with
-// the real Windows toolchain or played in an actual game session - see
-// HANDOFF.md.
+// message-queue behavior all work as documented).
 #ifndef MOD_LOADER_H
 #define MOD_LOADER_H
 
