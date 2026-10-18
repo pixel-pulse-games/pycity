@@ -1,0 +1,29 @@
+/* PyCity additions to the Strongly Typed template. Loaded after main.css. */
+body,input,textarea,select{color:#596068}
+h1,h2,h3,h4,h5,h6{color:#6a7079}
+strong,b{color:#454b53}
+a{color:#4d535b}
+.image.featured img.pixel{height:auto;aspect-ratio:1;image-rendering:pixelated}
+.theme-btn{margin:1.5em 0 0}
+#latest-release-info{margin:2em 0}
+.panel{border-radius:6px;overflow:hidden;margin-bottom:2em}
+/* dark mode: theme.js adds body.dark-theme and sets the page background and text color */
+body.dark-theme #header,body.dark-theme #features,body.dark-theme #main{background:#0d1117}
+body.dark-theme #footer{background:#161b22;border-top-color:#30363d}
+body.dark-theme #copyright{border-top-color:#30363d}
+body.dark-theme #header>.container{border-bottom-color:#30363d;box-shadow:inset 0 -8px 0 0 #0d1117,inset 0 -10px 0 0 #30363d}
+body.dark-theme h1,body.dark-theme h2,body.dark-theme h3,body.dark-theme h4{color:#a9b6c4}
+body.dark-theme #header h1{color:#ed786a}
+body.dark-theme #header p{color:#9aa4b2}
+body.dark-theme #nav>ul>li>a{color:#aab4c0}
+body.dark-theme #nav>ul>li>a:before{background:#3a4350;color:#e4e4e4}
+body.dark-theme strong,body.dark-theme b{color:#e6edf3}
+body.dark-theme a{color:#a5c8ff;border-bottom-color:#30363d}
+body.dark-theme a:hover,body.dark-theme #nav>ul>li:hover>a{color:#ed786a}
+body.dark-theme hr,body.dark-theme ul.divided li{border-top-color:#30363d}
+body.dark-theme code{background:rgba(255,255,255,.1)}
+/* the template's banner used a demo photo we may not ship: calm slate with a faint grid instead */
+#banner{background:#2f3a4a;background-image:linear-gradient(rgba(255,255,255,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px);background-size:24px 24px}
+/* the template turns every button coral with white text; keep theme.js's toggle quiet and readable */
+.theme-btn{background:var(--btn-bg) !important;color:var(--text-color) !important;border:1px solid var(--border-color) !important;box-shadow:none !important;text-transform:none;letter-spacing:0;font-size:.8em;line-height:1;height:auto;padding:.55em .9em !important}
+body.dark-theme #logo a,body.dark-theme #header h1 a{color:#ed786a}
