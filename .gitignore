@@ -13,3 +13,4 @@ build.txt
 
 # Local deploy script
 deploy.bat
+*.so
